@@ -1,0 +1,47 @@
+# LiPo on an ADC divider (e.g. XIAO ESP32-C3, 2 x 1 MOhm on A0), deep sleep
+esphome:
+  name: li-battery-voltage-only
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+sensor:
+  - platform: adc
+    id: vbat
+    pin: GPIO2
+    attenuation: 12db
+    samples: 64
+    update_interval: 60s
+    filters:
+      - multiply: 2.03            # divider factor
+
+li_battery:
+  id: bat
+  voltage: vbat
+  chemistry: lipo
+  capacity: 920                   # mAh
+  restore: rtc                    # keep smoothing / levels through deep sleep
+  low: 10                         # %
+  critical: 3.50                  # V per cell, rest
+  resume: 3.65
+  percent:
+    name: Battery
+  rest_voltage:
+    name: Battery rest voltage
+  report_voltage:
+    name: Voltage
+  remaining:
+    name: Battery remaining
+  low_alarm:
+    name: Battery low
+  critical_alarm:
+    name: Battery critical
