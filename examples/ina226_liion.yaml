@@ -1,0 +1,73 @@
+# 3 x 18650 in parallel with an INA226 on a 10 mOhm shunt (current: + discharge, - charge)
+esphome:
+  name: li-battery-ina226
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+i2c:
+  sda: GPIO6
+  scl: GPIO7
+
+sensor:
+  - platform: ina226
+    address: 0x40
+    shunt_resistance: 0.01
+    max_current: 8.19A
+    update_interval: 1s
+    power:
+      id: bat_power
+      name: Battery Power
+      filters:
+        # INA226 power has no sign: take it from the current
+        - lambda: |-
+            return id(bat_current).state < 0 ? -fabsf(x) : fabsf(x);
+    current:
+      id: bat_current
+      name: Battery Current
+      filters:
+        - sliding_window_moving_average: {window_size: 10, send_every: 1}
+    bus_voltage:
+      id: bat_voltage
+      name: Battery Voltage
+      filters:
+        - skip_initial: 10
+        - sliding_window_moving_average: {window_size: 20, send_every: 1}
+
+li_battery:
+  id: bat
+  voltage: bat_voltage
+  current: bat_current
+  power: bat_power                # both given: current for the math, power passed to power_out
+  chemistry: liion
+  cells_parallel: 3
+  internal_resistance: 0.14       # ohm, pack
+  update_interval: 2s
+  percent:
+    name: Battery Level
+  charging:
+    name: Battery Charging
+  status:
+    name: Battery Status
+  remaining:
+    name: Battery Remaining
+  time_left:
+    name: Battery Time Left
+  power_out:
+    name: Battery Power (signed)
+
+number:
+  - platform: li_battery
+    li_battery_id: bat
+    type: capacity                # per cell, mAh, kept in flash, editable in HA
+    name: Battery Capacity
+    initial_value: 2900

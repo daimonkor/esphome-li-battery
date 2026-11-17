@@ -1,0 +1,36 @@
+name: CI
+on:
+  push:
+  pull_request:
+jobs:
+  host-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Core tests
+        run: make -C tests/host
+  esphome-config:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install esphome
+      - name: Validate examples
+        run: |
+          cd examples
+          for f in *.yaml; do echo "== $f"; esphome config "$f" > /dev/null; done
+  esphome-compile:
+    runs-on: ubuntu-latest
+    needs: esphome-config
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.13"
+      - run: pip install esphome
+      - name: Compile examples
+        run: |
+          cd examples
+          for f in voltage_only_lipo.yaml ina226_liion.yaml; do esphome compile "$f"; done

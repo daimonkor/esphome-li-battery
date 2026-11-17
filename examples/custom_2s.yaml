@@ -1,0 +1,50 @@
+# 2S pack with its own curve and capacity from an existing number entity
+esphome:
+  name: li-battery-custom
+
+esp32:
+  board: esp32dev
+
+external_components:
+  - source:
+      type: local
+      path: ../components
+
+number:
+  - platform: template
+    id: cap
+    name: Pack capacity
+    optimistic: true
+    min_value: 0
+    max_value: 10000
+    step: 100
+    restore_value: true
+    initial_value: 2000
+
+sensor:
+  - platform: adc
+    id: vpack
+    pin: GPIO34
+    attenuation: 12db
+    filters:
+      - multiply: 3.0
+  - platform: template
+    id: pack_power
+    lambda: return 1.5;
+
+li_battery:
+  id: pack
+  voltage: vpack
+  power: pack_power               # W, + discharge, - charge (no current sensor: I = P / V)
+  chemistry: custom
+  curve:
+    - {voltage: 3.0V, percent: 0}
+    - {voltage: 3.7V, percent: 50}
+    - {voltage: 4.2V, percent: 100}
+  cells_series: 2
+  capacity: cap
+  charge_enter_current: 0         # charging strictly by the sign
+  charge_exit_current: 0
+  debounce: 1
+  percent:
+    name: Pack
