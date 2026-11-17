@@ -1,5 +1,7 @@
 # Как пользоваться li_battery
 
+[English](usage.md) · **Русский** · [Українська](usage.uk.md)
+
 ## 1. Hello world
 
 Самый короткий рабочий конфиг. Шаблонный сенсор стоит вместо настоящего напряжения
@@ -172,4 +174,4 @@ python3 -m pytest tests/config   # проверка конфигов ESPHome: п
 make -C tests/host replay        # 6 дней настоящих данных INA226 с весов
 ```
 
-Как устроено внутри, с диаграммами: [how-it-works.md](how-it-works.md).
+Как устроено внутри, с диаграммами: [how-it-works.ru.md](how-it-works.ru.md).

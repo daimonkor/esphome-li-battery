@@ -1,5 +1,7 @@
 # How li_battery works
 
+**English** · [Русский](how-it-works.ru.md) · [Українська](how-it-works.uk.md)
+
 ## Model
 
 ```mermaid
