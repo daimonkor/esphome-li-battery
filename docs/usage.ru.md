@@ -169,6 +169,7 @@ number:
 ```bash
 make -C tests/host               # ядро: кривые, оба режима, совпадение со старым кодом
 python3 -m pytest tests/config   # проверка конфигов ESPHome: правильные и ошибочные
+make -C tests/host replay        # 6 дней настоящих данных INA226 с весов
 ```
 
 Как устроено внутри, с диаграммами: [how-it-works.md](how-it-works.md).

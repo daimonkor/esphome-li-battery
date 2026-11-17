@@ -163,6 +163,7 @@ number:
 ```bash
 make -C tests/host          # core: curves, both modes, equivalence with the code it replaced
 python3 -m pytest tests/config   # ESPHome config validation, good and bad configs
+make -C tests/host replay        # 6 days of real INA226 data from a scale
 ```
 
 How it works inside, with diagrams: [how-it-works.md](how-it-works.md).

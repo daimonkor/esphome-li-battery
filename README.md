@@ -141,7 +141,9 @@ modem cut-off), `process_voltage(v)`, `rescale(ratio)` (divider factor changed),
 
 The core (`li_battery_core.h`) has no ESPHome dependency. `make -C tests/host` runs ~3 million checks
 (scenarios with explicit expectations plus equivalence runs), `python3 -m pytest tests/config` validates
-good and bad configs. Tested on a real device as well. The equivalence runs cover the code it replaced
+good and bad configs, `make -C tests/host replay` replays 6 days of real INA226 data from the scales
+(26 080 ticks: same result as the scales' own code on every tick, within 0.74 % of what they reported to HA).
+Tested on a real device as well. The equivalence runs cover the code it replaced
 in two real devices
 (a BLE motion sensor on a LiPo and a solar beehive scale with INA226 and 18650 cells).
 
