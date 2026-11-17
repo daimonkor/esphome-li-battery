@@ -1,0 +1,99 @@
+# Real case 2 — HiveScale: ESP32-C3, 3 × 18650 2900 mAh in parallel, INA226 on a 10 mOhm shunt,
+# solar MPPT charger. Same filters and numbers as the scale; li_battery replaces calc_soc(),
+# the coulomb counting interval and the charging hysteresis — same results (tests/host replay).
+esphome:
+  name: li-battery-hivescale
+
+esp32:
+  board: esp32-c3-devkitm-1
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components           # in your project: github://daimonkor/esphome-li-battery@v1.0.0
+    components: [li_battery]
+
+i2c:
+  sda: GPIO6
+  scl: GPIO7
+
+number:
+  - platform: template
+    id: bat_capacity_mah            # the scale's own number: whole pack, 0 = not set
+    name: Battery Capacity
+    optimistic: true
+    restore_value: true
+    min_value: 0
+    max_value: 30000
+    step: 100
+    initial_value: 0
+    unit_of_measurement: mAh
+  - platform: template
+    id: gsm_bat_limit_pct
+    name: GSM Battery Limit
+    unit_of_measurement: "%"
+    min_value: 0
+    max_value: 100
+    step: 1
+    initial_value: 10
+    optimistic: true
+    restore_value: true
+    set_action:
+      - lambda: |-
+          const float i = id(bat_current).has_state() ? id(bat_current).state : 0.0f;
+          ESP_LOGI("gsm_limit", "GSM Battery Limit = %.0f %% -> %.3f V at %.3f A", x,
+                   id(bat).voltage_for_percent(x, i), i);
+
+sensor:
+  - platform: ina226
+    address: 0x40
+    shunt_resistance: 0.01
+    max_current: 8.19A
+    adc_time: 1100us
+    adc_averaging: 16
+    update_interval: 1s
+    current:
+      id: bat_current               # + discharge, − charge
+      name: Battery Current
+      filters:
+        - sliding_window_moving_average: {window_size: 10, send_every: 1}
+    power:
+      id: bat_power
+      name: Battery Power
+      filters:
+        # INA226 power has no sign: take it from the current
+        - lambda: |-
+            return id(bat_current).state < 0.0f ? -fabsf(x) : fabsf(x);
+        - sliding_window_moving_average: {window_size: 10, send_every: 1}
+    bus_voltage:
+      id: bat_voltage
+      name: Battery Voltage
+      filters:
+        - skip_initial: 10          # Wi-Fi start-up sag
+        - sliding_window_moving_average: {window_size: 20, send_every: 1}
+
+li_battery:
+  id: bat
+  voltage: bat_voltage
+  current: bat_current
+  power: bat_power                  # passed to power_out as is
+  chemistry: liion
+  capacity: bat_capacity_mah        # whole pack in this number -> cells_parallel stays 1; 0 = no coulomb counting
+  internal_resistance: 0.14         # ohm, measured 2026-10-01
+  update_interval: 2s               # the scale's coulomb interval
+  percent:
+    name: Battery Level
+  charging:
+    name: Battery Charging
+  status:
+    name: Battery Status
+  remaining:
+    name: Battery Remaining
+  time_left:
+    name: Battery Time Left
+  power_out:
+    name: Battery Power (li_battery)

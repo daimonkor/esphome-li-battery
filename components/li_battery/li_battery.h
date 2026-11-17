@@ -91,9 +91,12 @@ class LiBattery : public PollingComponent {
   float rest_voltage() const { return this->state_->ocv; }
   float report_voltage() const { return this->est_.report_voltage(); }
   float remaining_mah() const { return this->est_.remaining_mah(); }
-  // pack voltage at which the curve gives `pct` (e.g. a cut-off for a modem)
-  float voltage_for_percent(float pct) const {
-    return ::li_battery_core::voltage_from_pct(this->est_.cfg.curve, pct) * this->est_.series();
+  // pack voltage at which the curve gives `pct` (e.g. a cut-off for a modem). With `current_a`
+  // (A, + discharge): the voltage a meter shows at that current, OCV − I·R.
+  float voltage_for_percent(float pct, float current_a = 0) const {
+    const float ocv = ::li_battery_core::voltage_from_pct(this->est_.cfg.curve, pct) * this->est_.series();
+    if (std::isnan(current_a)) return ocv;
+    return ocv - current_a * this->est_.cfg.internal_resistance;
   }
   // feed a pack voltage directly (voltage-only mode, no input sensor), returns %
   float process_voltage(float v);

@@ -261,6 +261,20 @@ static void test_ir_compensation_and_lifepo4() {
   CHECK_NEAR(s2.ocv, 13.04, 1e-4);
 }
 
+// the scales' GSM Battery Limit: % -> OCV by the same table, then terminal = OCV - I*R
+static void test_inverse_like_scales() {
+  const float cs[] = { 0.0f, 1.0f, 5.0f,15.0f,25.0f,40.0f,50.0f,60.0f,70.0f,80.0f,88.0f,94.0f,98.0f,100.0f};
+  const float cv[] = {2.90f,3.20f,3.40f,3.60f,3.70f,3.80f,3.85f,3.90f,3.95f,4.00f,4.05f,4.10f,4.15f,4.20f};
+  const int N = 14;
+  const Curve li = builtin_curve(Chemistry::LIION);
+  for (float x = 0.5f; x < 100; x += 0.5f) {
+    float lim_ocv = cv[N - 1];
+    for (int k = 1; k < N; k++)
+      if (x <= cs[k]) { lim_ocv = cv[k - 1] + (x - cs[k - 1]) / (cs[k] - cs[k - 1]) * (cv[k] - cv[k - 1]); break; }
+    CHECK_NEAR(voltage_from_pct(li, x), lim_ocv, 1e-5);
+  }
+}
+
 static void test_custom_curve() {
   static const CurvePoint pts[] = {{3.0f, 0}, {3.7f, 50}, {4.2f, 100}};
   Config c;
@@ -286,6 +300,7 @@ int main() {
   test_sign_trigger_and_no_capacity();
   test_ir_compensation_and_lifepo4();
   test_custom_curve();
+  test_inverse_like_scales();
   std::printf("%s: %d checks, %d failed\n", g_fail ? "FAILED" : "OK", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }
