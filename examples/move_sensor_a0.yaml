@@ -1,0 +1,98 @@
+# Real case 1 — Move Sensor BLE: XIAO ESP32-C3, LiPo 920 mAh, divider 2 × 1 MOhm on A0, deep sleep.
+# Only A0, no current sensor. The rest voltage is measured before the radio starts and fed to
+# li_battery with process_voltage(); the divider factor is a number editable from HA (rescale()).
+esphome:
+  name: li-battery-move-sensor
+  on_boot:
+    - priority: 550                 # ADC is up, BLE / Wi-Fi are not: almost rest voltage
+      then:
+        - component.update: vbat
+
+esp32:
+  board: seeed_xiao_esp32c3
+  framework:
+    type: esp-idf
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components           # in your project: github://daimonkor/esphome-li-battery@v1.0.0
+    components: [li_battery]
+
+deep_sleep:
+  id: ds
+  sleep_duration: 5min
+
+number:
+  - platform: template
+    id: vbat_factor
+    name: Voltage factor
+    entity_category: config
+    min_value: 1.5
+    max_value: 2.5
+    step: 0.001
+    initial_value: 2.03
+    optimistic: true
+    restore_value: true
+    set_action:
+      # history was smoothed with the old factor: move it at once
+      - lambda: 'if (id(vbat_factor).state > 0) id(bat).rescale(x / id(vbat_factor).state);'
+  - platform: template
+    id: bat_capacity
+    name: Battery capacity
+    entity_category: config
+    unit_of_measurement: mAh
+    min_value: 100
+    max_value: 5000
+    step: 10
+    initial_value: 920
+    optimistic: true
+    restore_value: true
+  - platform: template
+    id: bat_low_level
+    name: Battery low level
+    entity_category: config
+    unit_of_measurement: "%"
+    min_value: 5
+    max_value: 50
+    step: 1
+    initial_value: 10
+    optimistic: true
+    restore_value: true
+
+sensor:
+  - platform: adc
+    id: vbat
+    name: Voltage
+    pin: GPIO2                      # A0
+    attenuation: 12db
+    samples: 64
+    update_interval: never
+    filters:
+      - lambda: return x * id(vbat_factor).state;
+    on_value:
+      - lambda: |-
+          const float p = id(bat).process_voltage(x);
+          ESP_LOGI("bat", "%.3f V -> %.0f %%%s%s", x, p, id(bat).is_low() ? " LOW" : "",
+                   id(bat).is_critical() ? " CRITICAL" : "");
+
+li_battery:
+  id: bat
+  chemistry: lipo
+  capacity: bat_capacity            # numbers -> editable from HA
+  low: bat_low_level
+  critical: 3.50                    # protects the cell: firmware only
+  resume: 3.65
+  restore: rtc                      # smoothing and levels survive deep sleep
+  percent:
+    name: Battery
+  remaining:
+    name: Battery remaining
+  report_voltage:
+    name: Battery voltage (report)
+  low_alarm:
+    name: Battery low
+  critical_alarm:
+    name: Battery critical

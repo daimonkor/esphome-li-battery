@@ -95,7 +95,9 @@ number:
     initial_value: 2900
 ```
 
-Ще приклади — у [`examples/`](examples).
+Ще приклади — у [`examples/`](examples), зокрема два реальні пристрої:
+[`move_sensor_a0.yaml`](examples/move_sensor_a0.yaml) (лише A0 з дільником) і
+[`hivescale_ina226.yaml`](examples/hivescale_ina226.yaml) (INA226, 3 × 18650).
 
 ## Налаштування
 
@@ -137,8 +139,8 @@ number:
 `critical_alarm` (бінарні), `status` (текст).
 
 **У лямбдах:** `id(bat).percent()`, `is_low()`, `is_critical()`, `is_charging()`, `rest_voltage()`,
-`report_voltage()`, `remaining_mah()`, `voltage_for_percent(30)` (напруга збірки для відсотка,
-наприклад поріг вимкнення модема), `process_voltage(v)`, `rescale(ratio)` (змінився коефіцієнт
+`report_voltage()`, `remaining_mah()`, `voltage_for_percent(30, струм)` (напруга збірки для відсотка, зі струмом — те, що покаже
+вольтметр під цим навантаженням; наприклад поріг вимкнення модема), `process_voltage(v)`, `rescale(ratio)` (змінився коефіцієнт
 дільника), `reset()`.
 
 ## Тести

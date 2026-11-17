@@ -94,7 +94,9 @@ number:
     initial_value: 2900
 ```
 
-More in [`examples/`](examples).
+More in [`examples/`](examples) — including the two real devices li_battery runs on:
+[`move_sensor_a0.yaml`](examples/move_sensor_a0.yaml) (only A0 with a divider) and
+[`hivescale_ina226.yaml`](examples/hivescale_ina226.yaml) (INA226, 3 × 18650).
 
 ## Configuration
 
@@ -135,8 +137,8 @@ rise this big is a charger and is taken at once), `report_average` (10), `report
 (binary), `status` (text).
 
 **In lambdas:** `id(bat).percent()`, `is_low()`, `is_critical()`, `is_charging()`, `rest_voltage()`,
-`report_voltage()`, `remaining_mah()`, `voltage_for_percent(30)` (pack voltage for a percent, e.g. a
-modem cut-off), `process_voltage(v)`, `rescale(ratio)` (divider factor changed), `reset()`.
+`report_voltage()`, `remaining_mah()`, `voltage_for_percent(30, current)` (pack voltage for a percent, with a current — what a meter
+shows under that load; e.g. a modem cut-off), `process_voltage(v)`, `rescale(ratio)` (divider factor changed), `reset()`.
 
 ## Tests
 

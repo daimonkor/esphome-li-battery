@@ -31,4 +31,4 @@ jobs:
       - name: Compile examples
         run: |
           cd examples
-          for f in hello_world.yaml voltage_only_lipo.yaml ina226_liion.yaml; do esphome compile "$f"; done
+          for f in hello_world.yaml voltage_only_lipo.yaml ina226_liion.yaml move_sensor_a0.yaml hivescale_ina226.yaml; do esphome compile "$f"; done
