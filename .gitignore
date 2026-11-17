@@ -2,3 +2,5 @@ tests/host/test_core
 .esphome/
 __pycache__/
 *.pyc
+tests/host/test_replay
+tests/host/ina226.csv
