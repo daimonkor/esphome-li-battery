@@ -1,0 +1,29 @@
+# Hello world: the smallest working li_battery config.
+# A template "voltage" stands in for your real sensor; li_battery turns it into a percent.
+# Copy, flash, and watch the log:  [li_battery] V 3.850 I nan -> rest 3.850 V, 55.0 %
+esphome:
+  name: li-battery-hello
+
+esp32:
+  board: esp32dev
+
+logger:
+
+external_components:
+  - source:
+      type: local
+      path: ../components         # in your project: github://daimonkor/esphome-li-battery@v1.0.0
+    components: [li_battery]
+
+sensor:
+  - platform: template
+    id: battery_voltage
+    unit_of_measurement: V
+    update_interval: 10s
+    lambda: return 3.85;          # your real sensor goes here (adc, ina226, ...)
+
+li_battery:
+  voltage: battery_voltage        # pack voltage in volts, divider already applied
+  chemistry: lipo
+  percent:
+    name: Battery

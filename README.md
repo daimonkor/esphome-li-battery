@@ -17,6 +17,25 @@ external_components:
     components: [li_battery]
 ```
 
+**Docs:** [how to use](docs/usage.md) · [как пользоваться (RU)](docs/usage.ru.md) ·
+[how it works, with diagrams](docs/how-it-works.md)
+
+## Hello world
+
+```yaml
+sensor:
+  - platform: template
+    id: battery_voltage
+    unit_of_measurement: V
+    lambda: return 3.85;          # your real sensor goes here (adc, ina226, ...)
+
+li_battery:
+  voltage: battery_voltage        # volts, divider already applied
+  chemistry: lipo
+  percent:
+    name: Battery                 # -> 55 %
+```
+
 ## Voltage only (LiPo on an ADC divider)
 
 ```yaml
@@ -120,9 +139,11 @@ modem cut-off), `process_voltage(v)`, `rescale(ratio)` (divider factor changed),
 
 ## Tests
 
-The core (`li_battery_core.h`) has no ESPHome dependency. `make -C tests/host` runs ~3 million checks,
-including equivalence with the code it replaced in two real devices (a BLE motion sensor on a LiPo and
-a solar beehive scale with INA226 and 18650 cells).
+The core (`li_battery_core.h`) has no ESPHome dependency. `make -C tests/host` runs ~3 million checks
+(scenarios with explicit expectations plus equivalence runs), `python3 -m pytest tests/config` validates
+good and bad configs. Tested on a real device as well. The equivalence runs cover the code it replaced
+in two real devices
+(a BLE motion sensor on a LiPo and a solar beehive scale with INA226 and 18650 cells).
 
 ## Changelog
 
