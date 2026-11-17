@@ -1,5 +1,7 @@
 # Using li_battery
 
+**English** · [Русский](usage.ru.md) · [Українська](usage.uk.md)
+
 ## 1. Hello world
 
 The smallest config that works — a template sensor stands in for your real voltage

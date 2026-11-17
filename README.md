@@ -1,5 +1,7 @@
 # esphome-li-battery
 
+**English** · [Русский](README.ru.md) · [Українська](README.uk.md)
+
 ESPHome external component: state of charge for **LiPo / Li-ion (18650, 21700) / LiFePO4** batteries.
 
 - **Voltage only** — an ADC divider measured at rest (before the radio starts). Smoothing, the percent
@@ -17,8 +19,7 @@ external_components:
     components: [li_battery]
 ```
 
-**Docs:** [how to use](docs/usage.md) · [как пользоваться (RU)](docs/usage.ru.md) ·
-[how it works, with diagrams](docs/how-it-works.md)
+**Docs:** [how to use](docs/usage.md) · [how it works, with diagrams](docs/how-it-works.md)
 
 ## Hello world
 
@@ -139,13 +140,16 @@ modem cut-off), `process_voltage(v)`, `rescale(ratio)` (divider factor changed),
 
 ## Tests
 
-The core (`li_battery_core.h`) has no ESPHome dependency. `make -C tests/host` runs ~3 million checks
-(scenarios with explicit expectations plus equivalence runs), `python3 -m pytest tests/config` validates
-good and bad configs, `make -C tests/host replay` replays 6 days of real INA226 data from the scales
-(26 080 ticks: same result as the scales' own code on every tick, within 0.74 % of what they reported to HA).
-Tested on a real device as well. The equivalence runs cover the code it replaced
-in two real devices
-(a BLE motion sensor on a LiPo and a solar beehive scale with INA226 and 18650 cells).
+The core (`li_battery_core.h`) has no ESPHome dependency.
+
+- `make -C tests/host` — ~3 million checks: scenarios with explicit expectations, plus equivalence runs
+  against the code li_battery replaced in two real devices (a BLE motion sensor on a LiPo and a solar
+  beehive scale with an INA226 and 18650 cells);
+- `make -C tests/host replay` — 6 days of real INA226 data from the scale: 26 080 ticks, the same result as
+  the scale's own code on every tick, within 0.74 % of what it reported to Home Assistant;
+- `python3 -m pytest tests/config` — good and bad ESPHome configs.
+
+CI runs all of it and builds the examples. Also tested on a real device.
 
 ## Changelog
 
