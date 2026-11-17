@@ -299,12 +299,135 @@ static void test_rescale_and_nan() {
   CHECK(!st.valid());
 }
 
+
+// ---- scenarios with explicit expectations
+static void test_voltage_only_rules() {
+  State st;
+  Estimator e(sensor_cfg(), &st);
+  CHECK_NEAR(e.update_voltage(3.85f), 55, 0);           // first reading taken as is
+  CHECK_NEAR(e.update_voltage(3.87f), 55, 0);           // small rise without charger: percent stays
+  CHECK_NEAR(e.update_voltage(3.84f), 55, 0);           // smoothing: one low reading barely moves it
+  for (int k = 0; k < 40; k++) e.update_voltage(3.80f);
+  CHECK_NEAR(st.percent, 40, 1);                         // ... a steady fall gets through
+  CHECK_NEAR(e.update_voltage(4.00f), 78, 1);           // jump > 0.10 V = charger: accepted at once
+  // low / critical with hysteresis
+  State s2;
+  Estimator e2(sensor_cfg(), &s2);
+  e2.update_voltage(3.69f);
+  CHECK(s2.low && !s2.critical);                         // 10 %
+  e2.update_voltage(3.70f);
+  CHECK(s2.low);                                         // 12 %: still low (clears at 15)
+  e2.update_voltage(3.49f);
+  CHECK(!s2.critical);                                   // one noisy low reading is smoothed away
+  for (int k = 0; k < 30; k++) e2.update_voltage(3.49f);
+  CHECK(s2.critical);                                    // a steady one gets through
+  for (int k = 0; k < 30; k++) e2.update_voltage(3.60f);
+  CHECK(s2.critical);                                    // below resume 3.65
+  e2.update_voltage(3.80f);                              // recharged (jump)
+  CHECK(!s2.critical && !s2.low);
+}
+
+static void test_report_voltage() {
+  State st;
+  Estimator e(sensor_cfg(), &st);
+  e.update_voltage(4.00f);
+  CHECK_NEAR(e.report_voltage(), 4.00, 1e-6);
+  e.update_voltage(4.02f);                               // avg 4.01: change < 0.03 -> keeps 4.00
+  CHECK_NEAR(e.report_voltage(), 4.00, 1e-6);
+  for (int k = 0; k < 10; k++) e.update_voltage(4.05f);
+  CHECK_NEAR(e.report_voltage(), 4.03, 1e-6);            // moved once by >= 0.03, then 4.05 is < 0.03 away
+  for (int k = 0; k < 10; k++) e.update_voltage(4.07f);
+  CHECK_NEAR(e.report_voltage(), 4.07, 0.0301);          // within one step of the true value
+  e.update_voltage(3.80f);                               // jump > 0.15: average restarts
+  CHECK_NEAR(e.report_voltage(), 3.80, 1e-6);
+}
+
+static void test_charge_cycle() {
+  Config c = scales_cfg(2000);
+  State st;
+  Estimator e(c, &st);
+  int64_t t = 1000;
+  for (int k = 0; k < 5; k++) e.update(3.80f, 0.0f, t += 2000);   // rest at 40 %
+  CHECK_NEAR(st.percent, 40, 0.01);
+  CHECK(st.status == Status::IDLE);
+  e.update(3.95f, -1.0f, t += 2000);                     // 1 A charge, first update: debounce
+  CHECK(!st.charging);
+  e.update(3.95f, -1.0f, t += 2000);
+  CHECK(st.charging && st.status == Status::CHARGING);
+  CHECK_NEAR(st.percent, 40, 0.01);                       // starts from the last rest value, no jump
+  for (int k = 0; k < 1800; k++) e.update(3.95f, -1.0f, t += 2000);   // 1 h at 1 A = 1000 mAh
+  CHECK_NEAR(st.percent, 90, 0.2);                        // 40 % + 1000/2000 -> 90 %
+  e.update(4.16f, -0.03f, t += 2000);                     // tapered off at full voltage
+  CHECK_NEAR(st.percent, 100, 0);
+  e.update(4.10f, 0.0f, t += 2000);
+  e.update(4.10f, 0.0f, t += 2000);
+  CHECK(!st.charging);
+  CHECK_NEAR(st.percent, 100, 0.01);                      // hold: still counting
+  e.update(4.10f, 0.0f, t += 21 * 60 * 1000);             // gap > max_dt: not integrated, hold expired
+  CHECK_NEAR(st.percent, 94, 0.01);                       // back to the curve: 4.10 V -> 94 %
+  CHECK(st.soc_cc < 0);
+}
+
+static void test_sign_trigger_and_no_capacity() {
+  Config c = scales_cfg(0);                               // capacity unknown
+  c.charge_enter_a = 0;
+  c.charge_exit_a = 0;
+  c.debounce = 1;
+  State st;
+  Estimator e(c, &st);
+  e.update(3.80f, -0.001f, 1000);
+  CHECK(st.charging);                                     // strictly by the sign, at once
+  const float p = st.percent;
+  e.update(3.85f, -0.5f, 3000);
+  CHECK_NEAR(st.percent, p, 0);                           // no capacity: count holds, no integration
+  e.update(3.80f, 0.001f, 5000);
+  CHECK(!st.charging);
+  CHECK(std::isnan(e.remaining_mah()));
+}
+
+static void test_ir_compensation_and_lifepo4() {
+  Config c = scales_cfg(2900);
+  State st;
+  Estimator e(c, &st);
+  e.update(3.80f - 0.5f * 0.14f, 0.5f, 1000);             // 0.5 A load drops V by I*R
+  CHECK_NEAR(st.ocv, 3.80, 1e-4);
+  CHECK_NEAR(st.percent, 40, 0.01);
+  Config lf;
+  lf.curve = builtin_curve(Chemistry::LIFEPO4);
+  lf.cells_series = 4;
+  lf.critical_v = 2.90f;
+  lf.resume_v = 3.10f;
+  State s2;
+  Estimator e2(lf, &s2);
+  CHECK_NEAR(e2.update_voltage(4 * 3.26f), 50, 0);
+  CHECK_NEAR(s2.ocv, 13.04, 1e-4);
+}
+
+static void test_custom_curve() {
+  static const CurvePoint pts[] = {{3.0f, 0}, {3.7f, 50}, {4.2f, 100}};
+  Config c;
+  c.curve = {pts, 3};
+  c.smoothing = 1;
+  c.only_falls = false;
+  State st;
+  Estimator e(c, &st);
+  CHECK_NEAR(e.update_voltage(3.35f), 25, 0);
+  CHECK_NEAR(e.update_voltage(3.95f), 75, 0);
+  CHECK_NEAR(voltage_from_pct(c.curve, 75), 3.95, 1e-5);
+}
+
 int main() {
   test_curves();
   test_sensor_equivalence();
   test_scales_equivalence();
   test_series_parallel_power();
   test_rescale_and_nan();
+  test_voltage_only_rules();
+  test_report_voltage();
+  test_charge_cycle();
+  test_sign_trigger_and_no_capacity();
+  test_ir_compensation_and_lifepo4();
+  test_custom_curve();
   std::printf("%s: %d checks, %d failed\n", g_fail ? "FAILED" : "OK", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }
