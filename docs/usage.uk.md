@@ -9,7 +9,7 @@
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.0.0
+  - source: github://daimonkor/esphome-li-battery@v1.1.0
     components: [li_battery]
 
 sensor:
@@ -133,7 +133,7 @@ script:
 ```
 
 Доступно: `percent()`, `is_low()`, `is_critical()`, `is_charging()`, `rest_voltage()`,
-`report_voltage()`, `remaining_mah()`, `voltage_for_percent(p)`, `process_voltage(v)`,
+`report_voltage()`, `remaining_mah()`, `voltage_for_percent(p, струм)`, `process_voltage(v)`,
 `rescale(ratio)`, `reset()`.
 
 ## 6. Змінили коефіцієнт дільника з HA

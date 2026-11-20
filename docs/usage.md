@@ -9,7 +9,7 @@ The smallest config that works — a template sensor stands in for your real vol
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.0.0
+  - source: github://daimonkor/esphome-li-battery@v1.1.0
     components: [li_battery]
 
 sensor:
@@ -132,7 +132,7 @@ script:
 ```
 
 Available: `percent()`, `is_low()`, `is_critical()`, `is_charging()`, `rest_voltage()`,
-`report_voltage()`, `remaining_mah()`, `voltage_for_percent(p)`, `process_voltage(v)`,
+`report_voltage()`, `remaining_mah()`, `voltage_for_percent(p, current)`, `process_voltage(v)`,
 `rescale(ratio)`, `reset()`.
 
 ## 6. Divider factor changed from HA
