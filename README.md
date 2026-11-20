@@ -15,7 +15,7 @@ be changed from Home Assistant.
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.0.0
+  - source: github://daimonkor/esphome-li-battery@v1.1.0
     components: [li_battery]
 ```
 
