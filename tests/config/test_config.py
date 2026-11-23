@@ -45,6 +45,7 @@ GOOD = {
     "no_input_process_voltage": "li_battery:\n  id: b\n  chemistry: liion\n",
     "current_and_power": "li_battery:\n  voltage: v\n  current: i\n  power: i\n",
     "lifepo4_4s": "li_battery:\n  voltage: v\n  chemistry: lifepo4\n  cells_series: 4\n",
+    "charge_detect": "li_battery:\n  voltage: v\n  charge_detect: true\n  charge_voltage: 4.17\n  charging:\n    name: c\n  time_left:\n    name: t\n",
     "custom_curve": textwrap.dedent("""\
         li_battery:
           voltage: v
@@ -69,6 +70,10 @@ BAD = {
     "unknown_chemistry": ("li_battery:\n  voltage: v\n  chemistry: nimh\n", "nimh"),
     "zero_cells": ("li_battery:\n  voltage: v\n  cells_series: 0\n", "cells_series"),
     "voltage_not_a_sensor": ("li_battery:\n  voltage: nope\n", "nope"),
+    "charge_detect_with_current": (
+        "li_battery:\n  voltage: v\n  current: i\n  charge_detect: true\n",
+        "'charge_detect' is for voltage only",
+    ),
 }
 
 

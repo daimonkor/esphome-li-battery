@@ -54,6 +54,9 @@ CONF_FULL_CURRENT = "full_current"
 CONF_HOLD_AFTER_CHARGE = "hold_after_charge"
 CONF_REPORT_STEP = "report_step"
 CONF_REPORT_AVERAGE = "report_average"
+CONF_CHARGE_DETECT = "charge_detect"
+CONF_CHARGE_VOLTAGE = "charge_voltage"
+CONF_CHARGE_JUMP = "charge_jump"
 # outputs
 CONF_PERCENT = "percent"
 CONF_REST_VOLTAGE = "rest_voltage"
@@ -83,6 +86,8 @@ CHEM_DEFAULTS = {
     "lifepo4": (2.90, 3.10, 3.45),
     "custom": (None, None, 4.15),
 }
+# per-cell voltage at or above which a voltage-only battery is taken as on the charger (charge_detect)
+CHARGE_V_DEFAULTS = {"lipo": 4.165, "liion": 4.165, "lifepo4": 3.50, "custom": 4.165}
 RESTORE = {"none": Restore.NONE, "rtc": Restore.RTC}
 
 
@@ -108,6 +113,8 @@ def _validate(config):
             raise cv.Invalid("curve: voltages must be strictly increasing")
     elif CONF_CURVE in config:
         raise cv.Invalid("'curve' is only used with chemistry: custom")
+    if config.get(CONF_CHARGE_DETECT) and (CONF_CURRENT in config or CONF_POWER in config):
+        raise cv.Invalid("'charge_detect' is for voltage only; with a current the charging state comes from its sign")
     return config
 
 
@@ -137,6 +144,10 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_JUMP_UP, default=0.10): cv.float_range(min=0, max=2),
             cv.Optional(CONF_REPORT_STEP, default=0.03): cv.float_range(min=0, max=1),
             cv.Optional(CONF_REPORT_AVERAGE, default=10): cv.int_range(min=1, max=16),
+            # voltage only: charging guessed from the voltage (jump / near-full, until it falls)
+            cv.Optional(CONF_CHARGE_DETECT, default=False): cv.boolean,
+            cv.Optional(CONF_CHARGE_VOLTAGE): cv.float_range(min=2, max=5),  # V per cell
+            cv.Optional(CONF_CHARGE_JUMP, default=0.04): cv.float_range(min=0.01, max=1),  # V per cell
             # voltage + current tuning (A; minus = charge)
             cv.Optional(CONF_CHARGE_ENTER_CURRENT, default=-0.008): cv.float_,
             cv.Optional(CONF_CHARGE_EXIT_CURRENT, default=-0.004): cv.float_,
@@ -251,6 +262,11 @@ async def to_code(config):
     cg.add(cg.RawStatement(f"{var}->core_config().jump_up_v = {config[CONF_JUMP_UP]}f;"))
     cg.add(cg.RawStatement(f"{var}->core_config().report_step_v = {config[CONF_REPORT_STEP]}f;"))
     cg.add(cg.RawStatement(f"{var}->core_config().report_avg_n = {config[CONF_REPORT_AVERAGE]};"))
+    if config[CONF_CHARGE_DETECT]:
+        cg.add(cg.RawStatement(f"{var}->core_config().charge_detect = true;"))
+        charge_v = config.get(CONF_CHARGE_VOLTAGE, CHARGE_V_DEFAULTS[chem])
+        cg.add(cg.RawStatement(f"{var}->core_config().charge_v = {charge_v}f;"))
+        cg.add(cg.RawStatement(f"{var}->core_config().charge_jump_v = {config[CONF_CHARGE_JUMP]}f;"))
     cg.add(cg.RawStatement(f"{var}->core_config().charge_enter_a = {config[CONF_CHARGE_ENTER_CURRENT]}f;"))
     cg.add(cg.RawStatement(f"{var}->core_config().charge_exit_a = {config[CONF_CHARGE_EXIT_CURRENT]}f;"))
     cg.add(cg.RawStatement(f"{var}->core_config().discharge_a = {config[CONF_DISCHARGE_CURRENT]}f;"))

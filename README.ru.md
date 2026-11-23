@@ -16,7 +16,7 @@
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.1.0
+  - source: github://daimonkor/esphome-li-battery@v1.2.0
     components: [li_battery]
 ```
 
@@ -127,6 +127,13 @@ number:
 `jump_up` (0.10 В на банку — такой подъём считается зарядкой и принимается сразу),
 `report_average` (10), `report_step` (0.03 В).
 
+**Зарядка без датчика тока** (только напряжение): `charge_detect: true`. Зарядка начинается, когда два
+замера подряд не ниже `charge_voltage` (lipo / liion 4.165 В на банку, lifepo4 3.50 В) или выше
+сглаженного напряжения покоя на `charge_jump` (0.04 В на банку); скачок, который за 30 мин не растёт
+дальше (отскок после нагрузки), отбрасывается. Заканчивается, когда два замера подряд ниже
+`charge_voltage` и на 0.05 В ниже пика на зарядке. Скорость разряда — по падению процента с последней
+зарядки (не меньше 2 % за 12 ч), из неё `time_left`. Нужны часы, идущие во сне (на ESP32 RTC — есть).
+
 **Тонкая настройка с током (А):** `charge_enter_current` (−0.008), `charge_exit_current` (−0.004),
 `discharge_current` (0.008), `debounce` (2 замера), `full_voltage` (4.15 В на банку, по химии),
 `full_current` (−0.05: выше этого при полном напряжении = 100 %), `hold_after_charge` (20min),
@@ -138,7 +145,7 @@ number:
 `remaining` (мА·ч), `time_left` (ч, при разряде), `power_out` (Вт), `charging`, `low_alarm`,
 `critical_alarm` (бинарные), `status` (текст).
 
-**В лямбдах:** `id(bat).percent()`, `is_low()`, `is_critical()`, `is_charging()`, `rest_voltage()`,
+**В лямбдах:** `id(bat).percent()`, `is_low()`, `is_critical()`, `is_charging()`, `discharge_rate_pct_h()`, `time_left_h()`, `rest_voltage()`,
 `report_voltage()`, `remaining_mah()`, `voltage_for_percent(30, ток)` (напряжение сборки для процента, с током — то, что покажет
 вольтметр под этой нагрузкой; например порог отключения модема), `process_voltage(v)`, `rescale(ratio)` (сменился коэффициент
 делителя), `reset()`.

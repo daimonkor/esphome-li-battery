@@ -14,7 +14,7 @@ logger:
 external_components:
   - source:
       type: local
-      path: ../components           # in your project: github://daimonkor/esphome-li-battery@v1.1.0
+      path: ../components           # in your project: github://daimonkor/esphome-li-battery@v1.2.0
     components: [li_battery]
 
 i2c:

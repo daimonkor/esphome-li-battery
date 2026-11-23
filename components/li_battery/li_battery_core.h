@@ -5,6 +5,9 @@
 // Two modes, picked by whether a current reading is available:
 //  * voltage only  — rest voltage measured with little load (e.g. ADC divider before the radio
 //                    starts). Smoothing, "percent only falls unless charging", low / critical.
+//                    Optional (charge_detect): charging guessed from the voltage alone — a jump
+//                    above the smoothed rest voltage or a near-full voltage, until it falls again —
+//                    and the discharge rate since the last charge (time left without a current sensor).
 //  * voltage + current (e.g. INA226) — open-circuit voltage = V + I·R (I > 0 discharge, I < 0
 //                    charge), charging state with hysteresis + debounce, coulomb counting while
 //                    charging and for a hold time after it, then back to the voltage curve.
@@ -112,6 +115,22 @@ struct Config {
   float report_step_v = 0.03f;
   float report_reset_v = 0.15f;    // pack: a jump bigger than this restarts the average
 
+  // voltage only: charging from the voltage alone (no charge-status pin, no current sensor).
+  // Real case (Move Sensor BLE, XIAO ESP32-C3 + LiPo): on the charger 4.17-4.21 V, right after
+  // unplugging it rests at 4.15 V for hours, a part-charged cell on the charger reads 4.10-4.15 V.
+  bool charge_detect = false;
+  float charge_v = 4.165f;         // per cell: at or above this -> on the charger
+  float charge_jump_v = 0.04f;     // per cell: this much above the smoothed rest voltage -> plugged in
+  float charge_drop_v = 0.05f;     // per cell: below charge_v - charge_hyst_v and this much under the peak ...
+  float charge_hyst_v = 0.01f;     //   (a reading at the charger's taper end may dip just under charge_v)
+  uint8_t charge_drop_n = 2;       // ... this many readings in a row -> unplugged
+  float charge_rise_v = 0.02f;     // after the start it must climb this much more (or reach charge_v) ...
+  uint32_t charge_confirm_ms = 30UL * 60UL * 1000UL;   // ... within this time, else it was a rebound
+  uint32_t charge_stale_ms = 2UL * 3600UL * 1000UL;    // no reading this long -> charging state dropped
+  // discharge rate (voltage only, charge_detect): from the percent drop since the last charge
+  float rate_min_drop_pct = 2;     // need at least this drop ...
+  uint32_t rate_min_ms = 12UL * 3600UL * 1000UL;       // ... over at least this time
+
   // voltage + current mode
   float charge_enter_a = -0.008f;  // I below this -> charging
   float charge_exit_a = -0.004f;   // charging until I rises above this
@@ -135,7 +154,8 @@ inline const char *status_str(Status s) {
 }
 
 // Everything that has to survive deep sleep (kept in RTC memory with `restore: rtc`).
-static constexpr uint32_t STATE_MAGIC = 0x4C694231u;  // "LiB1"
+// 1.2.0: "LiB2" — the struct grew (charge detection), an old RTC copy after an OTA is dropped
+static constexpr uint32_t STATE_MAGIC = 0x4C694232u;  // "LiB2"
 static constexpr uint8_t REPORT_MAX_N = 16;
 
 struct State {
@@ -155,6 +175,16 @@ struct State {
   float last_idle_soc = -1;        // last % from the curve at rest, -1 = unknown
   int64_t charge_end_ms = 0;
   int64_t last_ms = 0;             // time of the previous update, 0 = none
+  // voltage-only charge detection (charging / debounce_cnt above are shared with the current mode)
+  int64_t chg_since_ms = 0;
+  float chg_start_v = 0;           // per cell, first reading on the charger
+  float chg_peak_v = 0;            // per cell, highest reading on the charger
+  uint8_t chg_drops = 0;
+  bool chg_confirmed = false;
+  // discharge rate: percent and time at the anchor (charge end or first reading)
+  float rate_pct0 = -1;
+  int64_t rate_ms0 = 0;
+  float rate_pct_h = NAN;          // %/h, > 0 = discharging; NAN = not known yet
   // last results
   float percent = NAN;
   float ocv = NAN;                 // pack, after smoothing / I·R compensation
@@ -176,24 +206,34 @@ class Estimator {
   uint8_t series() const { return cfg.cells_series ? cfg.cells_series : 1; }
 
   // Voltage-only update: v_pack = rest voltage of the pack. Returns the percent.
-  float update_voltage(float v_pack) {
+  // now_ms: a clock that keeps running through deep sleep (needed for charge_detect timing and the
+  // discharge rate; 0 = no clock: the time-based rules are skipped).
+  float update_voltage(float v_pack, int64_t now_ms = 0) {
     if (std::isnan(v_pack)) return st->percent;
     report_filter_(v_pack);
     const float v = v_pack / series();
+    bool charge_ended = false;
+    if (cfg.charge_detect) charge_ended = charge_voltage_(v, now_ms);
     const bool jump = st->vf > 0 && v - st->vf > cfg.jump_up_v;
-    if (st->vf <= 0 || jump) st->vf = v;
+    // on the charger the reading follows the charger at once; just unplugged -> start over from it
+    if (st->vf <= 0 || jump || st->charging || charge_ended) st->vf = v;
     else st->vf += cfg.smoothing * (v - st->vf);
     float p = pct_from_voltage(cfg.curve, st->vf);
     if (cfg.round_percent) p = roundf(p);
-    if (cfg.only_falls && st->pct_last >= 0 && p > st->pct_last && !jump && p < st->pct_last + cfg.rise_accept_pct)
+    if (cfg.only_falls && st->pct_last >= 0 && p > st->pct_last && !jump && !st->charging && !charge_ended &&
+        p < st->pct_last + cfg.rise_accept_pct)
       p = st->pct_last;
     st->pct_last = (int16_t) lroundf(p);
     st->ocv = st->vf * series();
-    st->status = Status::UNKNOWN;
+    st->status = cfg.charge_detect ? (st->charging ? Status::CHARGING : Status::DISCHARGING) : Status::UNKNOWN;
     levels_(p, st->vf);
     st->percent = p;
+    if (cfg.charge_detect) rate_(p, now_ms, charge_ended);
     return p;
   }
+
+  // %/h of discharge since the last charge (voltage only, charge_detect), NAN while unknown
+  float discharge_rate_pct_h() const { return st->rate_pct_h; }
 
   // Voltage + current update (call at a steady rate, e.g. every 2 s). i > 0 discharge, i < 0 charge.
   float update(float v_pack, float i, int64_t now_ms) {
@@ -276,10 +316,15 @@ class Estimator {
     return cap * st->percent / 100.0f;
   }
 
-  // hours left at the given discharge current (A); NAN when not discharging
+  // hours left at the given discharge current (A); NAN when not discharging.
+  // Without a current (NAN) in voltage-only mode with charge_detect: from the discharge rate.
   float time_left_h(float i) const {
+    if (std::isnan(i)) {
+      if (st->charging || std::isnan(st->percent) || !(st->rate_pct_h > 0)) return NAN;
+      return st->percent / st->rate_pct_h;
+    }
     const float rem = remaining_mah();
-    if (std::isnan(rem) || std::isnan(i) || i <= cfg.discharge_a) return NAN;
+    if (std::isnan(rem) || i <= cfg.discharge_a) return NAN;
     return rem / (i * 1000.0f);
   }
 
@@ -307,6 +352,64 @@ class Estimator {
       else if (!std::isnan(cfg.resume_v) && v_cell >= cfg.resume_v) st->critical = false;
       else if (std::isnan(cfg.resume_v) && v_cell > cfg.critical_v) st->critical = false;
     }
+  }
+
+  // Charging from the voltage alone. v = cell reading, compared with the smoothed rest voltage
+  // before it is updated. Returns true on the reading where charging ended.
+  bool charge_voltage_(float v, int64_t now_ms) {
+    const bool clock = now_ms > 0;
+    if (clock && st->last_ms > 0 && now_ms - st->last_ms > (int64_t) cfg.charge_stale_ms && st->charging) {
+      st->charging = false;   // nothing heard for hours: do not keep "charging" from back then
+      st->debounce_cnt = 0;
+    }
+    if (clock) st->last_ms = now_ms;
+    if (!st->charging) {
+      const bool cand = v >= cfg.charge_v || (st->vf > 0 && v - st->vf >= cfg.charge_jump_v);
+      if (!cand) {
+        st->debounce_cnt = 0;
+        return false;
+      }
+      if (++st->debounce_cnt < (cfg.debounce ? cfg.debounce : 1)) return false;
+      st->debounce_cnt = 0;
+      st->charging = true;
+      st->chg_since_ms = now_ms;
+      st->chg_start_v = v;   // a rebound after a load jumps once and stays; a charger keeps climbing
+      st->chg_peak_v = v;
+      st->chg_drops = 0;
+      st->chg_confirmed = v >= cfg.charge_v;
+      return false;
+    }
+    if (v > st->chg_peak_v) st->chg_peak_v = v;
+    if (v >= cfg.charge_v || st->chg_peak_v >= st->chg_start_v + cfg.charge_rise_v - 1e-4f)
+      st->chg_confirmed = true;
+    if (v < cfg.charge_v - cfg.charge_hyst_v && v <= st->chg_peak_v - cfg.charge_drop_v + 1e-4f) st->chg_drops++;
+    else st->chg_drops = 0;
+    const bool unplugged = st->chg_drops >= (cfg.charge_drop_n ? cfg.charge_drop_n : 1);
+    const bool rebound = !st->chg_confirmed && clock && st->chg_since_ms > 0 &&
+                         now_ms - st->chg_since_ms >= (int64_t) cfg.charge_confirm_ms;
+    if (!unplugged && !rebound) return false;
+    st->charging = false;
+    st->chg_drops = 0;
+    return unplugged;   // a rebound changes nothing in the history
+  }
+
+  // Discharge rate since the anchor (charge end / first reading / a rise of the percent).
+  void rate_(float p, int64_t now_ms, bool charge_ended) {
+    if (now_ms <= 0 || std::isnan(p)) return;
+    if (st->charging) {
+      st->rate_pct0 = -1;   // new anchor after the charge
+      return;
+    }
+    if (charge_ended || st->rate_pct0 < 0 || p > st->rate_pct0 || now_ms < st->rate_ms0) {
+      // the old rate stays until the new anchor has enough data
+      st->rate_pct0 = p;
+      st->rate_ms0 = now_ms;
+      return;
+    }
+    const float drop = st->rate_pct0 - p;
+    const int64_t dt = now_ms - st->rate_ms0;
+    if (drop >= cfg.rate_min_drop_pct && dt >= (int64_t) cfg.rate_min_ms)
+      st->rate_pct_h = drop / ((float) dt / 3600000.0f);
   }
 
   void report_filter_(float v) {

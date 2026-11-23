@@ -6,6 +6,8 @@ ESPHome external component: state of charge for **LiPo / Li-ion (18650, 21700) /
 
 - **Voltage only** — an ADC divider measured at rest (before the radio starts). Smoothing, the percent
   only falls unless the battery is charging, low / critical levels that survive deep sleep.
+  With `charge_detect: true` it also tells when the battery is on the charger (no charge-status pin
+  needed) and how fast it discharges, so `time_left` works without a current sensor.
 - **Voltage + current (or power)** — INA226 and the like. Open-circuit voltage `V + I·R`, charging
   detected by the current sign with hysteresis and debounce, coulomb counting while charging and
   for 20 min after it, then back to the voltage curve.
@@ -15,7 +17,7 @@ be changed from Home Assistant.
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.1.0
+  - source: github://daimonkor/esphome-li-battery@v1.2.0
     components: [li_battery]
 ```
 
@@ -125,6 +127,14 @@ More in [`examples/`](examples) — including the two real devices li_battery ru
 **Voltage only tuning:** `smoothing` (0.15, 1 = off), `only_falls` (true), `jump_up` (0.10 V per cell — a
 rise this big is a charger and is taken at once), `report_average` (10), `report_step` (0.03 V).
 
+**Charging without a current sensor** (voltage only): `charge_detect: true`. Charging starts when two
+readings in a row are at or above `charge_voltage` (lipo / liion 4.165 V per cell, lifepo4 3.50 V) or
+`charge_jump` (0.04 V per cell) above the smoothed rest voltage; a jump that does not keep climbing
+within 30 min (a rebound after a load) is dropped. It ends when two readings in a row are under
+`charge_voltage` and 0.05 V below the peak on the charger. The discharge rate is taken from the percent
+drop since the last charge (at least 2 % over 12 h) and gives `time_left`. Needs a clock that runs
+through deep sleep (ESP32 RTC — built in).
+
 **Current tuning (A):** `charge_enter_current` (−0.008), `charge_exit_current` (−0.004),
 `discharge_current` (0.008), `debounce` (2 updates), `full_voltage` (4.15 V per cell, by chemistry),
 `full_current` (−0.05: above it at full voltage = 100 %), `hold_after_charge` (20min),
@@ -133,11 +143,11 @@ rise this big is a charger and is taken at once), `report_average` (10), `report
 
 **Outputs** (all optional): `percent`, `rest_voltage` (smoothed / I·R-compensated), `report_voltage`
 (average of the last readings, changes in 0.03 V steps — good for BLE packets), `remaining` (mAh),
-`time_left` (h, while discharging), `power_out` (W), `charging`, `low_alarm`, `critical_alarm`
+`time_left` (h, while discharging; voltage only — with `charge_detect`), `power_out` (W), `charging`, `low_alarm`, `critical_alarm`
 (binary), `status` (text).
 
 **In lambdas:** `id(bat).percent()`, `is_low()`, `is_critical()`, `is_charging()`, `rest_voltage()`,
-`report_voltage()`, `remaining_mah()`, `voltage_for_percent(30, current)` (pack voltage for a percent, with a current — what a meter
+`report_voltage()`, `remaining_mah()`, `discharge_rate_pct_h()`, `time_left_h()`, `voltage_for_percent(30, current)` (pack voltage for a percent, with a current — what a meter
 shows under that load; e.g. a modem cut-off), `process_voltage(v)`, `rescale(ratio)` (divider factor changed), `reset()`.
 
 ## Tests

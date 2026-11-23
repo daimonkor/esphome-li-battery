@@ -288,6 +288,109 @@ static void test_custom_curve() {
   CHECK_NEAR(voltage_from_pct(c.curve, 75), 3.95, 1e-5);
 }
 
+// ---- voltage-only charge detection (1.2.0), numbers from the Move Sensor BLE history (HA, 14-24.11.2026)
+static Config charge_cfg() {
+  Config c = sensor_cfg();
+  c.charge_detect = true;
+  return c;
+}
+static const int64_t MIN_MS = 60LL * 1000;
+
+static void test_charge_detect_full_cycle() {
+  State st;
+  Estimator e(charge_cfg(), &st);
+  int64_t t = 1000;
+  for (int k = 0; k < 30; k++) e.update_voltage(4.07f, t += 5 * MIN_MS);   // resting, 86-88 %
+  CHECK(!st.charging);
+  CHECK(st.status == Status::DISCHARGING);
+  const float before = st.percent;
+  e.update_voltage(4.15f, t += 2 * MIN_MS);              // plugged in: +0.08 V, first reading (debounce)
+  CHECK(!st.charging);
+  e.update_voltage(4.15f, t += 2 * MIN_MS);
+  CHECK(st.charging && st.status == Status::CHARGING);
+  CHECK(st.percent > before);                             // on the charger the percent may rise
+  const float on_charger[] = {4.16f, 4.17f, 4.21f, 4.17f, 4.206f, 4.167f, 4.173f, 4.159f, 4.18f, 4.17f};
+  for (float v : on_charger) e.update_voltage(v, t += 2 * MIN_MS);
+  CHECK(st.charging);                                     // taper noise (one 4.159) does not end it
+  CHECK(!std::isnan(e.time_left_h(NAN)) == false);        // no time left while charging
+  e.update_voltage(4.15f, t += 2 * MIN_MS);               // unplugged: rests at 4.15 V for hours
+  CHECK(st.charging);
+  e.update_voltage(4.15f, t += 2 * MIN_MS);
+  CHECK(!st.charging);
+  CHECK_NEAR(st.percent, 100, 0);                         // 4.15 V rest = full
+  for (int k = 0; k < 100; k++) e.update_voltage(4.15f, t += 5 * MIN_MS);
+  CHECK(!st.charging);                                    // 4.15 V rest is NOT charging (old 4.15 threshold was)
+}
+
+static void test_charge_detect_rebound_and_partial() {
+  // rebound after Wi-Fi load (23.11: 3.98 -> 4.07): looks like a jump, but does not keep rising
+  State st;
+  Estimator e(charge_cfg(), &st);
+  int64_t t = 1000;
+  for (int k = 0; k < 40; k++) e.update_voltage(3.98f, t += MIN_MS);
+  for (int k = 0; k < 3; k++) e.update_voltage(4.07f, t += MIN_MS);
+  CHECK(st.charging);                                     // taken as plugged in at first ...
+  for (int k = 0; k < 35; k++) e.update_voltage(4.07f, t += MIN_MS);
+  CHECK(!st.charging);                                    // ... dropped after 30 min without a climb
+  for (int k = 0; k < 60; k++) e.update_voltage(4.07f, t += MIN_MS);
+  CHECK(!st.charging);                                    // and not started again (vf caught up)
+
+  // part charge, unplugged before reaching charge_v
+  State s2;
+  Estimator e2(charge_cfg(), &s2);
+  t = 1000;
+  for (int k = 0; k < 20; k++) e2.update_voltage(3.80f, t += 5 * MIN_MS);
+  float v = 3.86f;
+  for (int k = 0; k < 20; k++, v += 0.01f) e2.update_voltage(v, t += 2 * MIN_MS);   // up to 4.05 V
+  CHECK(s2.charging);
+  e2.update_voltage(3.99f, t += 2 * MIN_MS);
+  e2.update_voltage(3.98f, t += 2 * MIN_MS);
+  CHECK(!s2.charging);
+  CHECK_NEAR(s2.vf, 3.98f, 1e-5);                         // history restarts from the rest reading
+}
+
+static void test_charge_detect_off_and_stale() {
+  State st;
+  Estimator e(sensor_cfg(), &st);                         // charge_detect off: old behaviour
+  for (int k = 0; k < 5; k++) e.update_voltage(4.20f, 1000 + k * MIN_MS);
+  CHECK(!st.charging && st.status == Status::UNKNOWN);
+  CHECK(std::isnan(e.time_left_h(NAN)));
+
+  State s2;
+  Estimator e2(charge_cfg(), &s2);
+  e2.update_voltage(4.20f, 1000);
+  e2.update_voltage(4.20f, 1000 + MIN_MS);
+  CHECK(s2.charging);
+  e2.update_voltage(4.10f, 1000 + 4 * 60 * MIN_MS);       // nothing for 4 h: old state dropped, plain reading
+  CHECK(!s2.charging);
+}
+
+static void test_discharge_rate() {
+  State st;
+  Estimator e(charge_cfg(), &st);
+  int64_t t = 1000;
+  e.update_voltage(4.20f, t += MIN_MS);
+  e.update_voltage(4.20f, t += MIN_MS);
+  CHECK(st.charging);
+  e.update_voltage(4.15f, t += MIN_MS);
+  e.update_voltage(4.15f, t += MIN_MS);
+  CHECK(!st.charging);
+  CHECK(std::isnan(e.discharge_rate_pct_h()));
+  // 4.15 -> 4.10 V over 24 h (100 -> 94 %)
+  for (int k = 1; k <= 288; k++) e.update_voltage(4.15f - 0.05f * k / 288.0f, t += 5 * MIN_MS);
+  CHECK(!std::isnan(e.discharge_rate_pct_h()));
+  CHECK_NEAR(e.discharge_rate_pct_h(), 6.0f / 24.0f, 0.06);
+  CHECK_NEAR(e.time_left_h(NAN), st.percent / e.discharge_rate_pct_h(), 1e-3);
+  CHECK(e.time_left_h(NAN) > 300 && e.time_left_h(NAN) < 500);
+  // no clock: rate stays unknown, charge detection still works by readings
+  State s2;
+  Estimator e2(charge_cfg(), &s2);
+  e2.update_voltage(4.20f);
+  e2.update_voltage(4.20f);
+  CHECK(s2.charging);
+  CHECK(std::isnan(e2.discharge_rate_pct_h()));
+}
+
 int main() {
   test_curves();
   test_sensor_equivalence();
@@ -301,6 +404,10 @@ int main() {
   test_ir_compensation_and_lifepo4();
   test_custom_curve();
   test_inverse_like_scales();
+  test_charge_detect_full_cycle();
+  test_charge_detect_rebound_and_partial();
+  test_charge_detect_off_and_stale();
+  test_discharge_rate();
   std::printf("%s: %d checks, %d failed\n", g_fail ? "FAILED" : "OK", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }

@@ -123,7 +123,7 @@ void LiBattery::process_(float v, float i) {
   this->apply_params_();
   const bool was_low = this->state_->low, was_crit = this->state_->critical, was_chg = this->state_->charging;
   if (std::isnan(i)) {
-    this->est_.update_voltage(v);
+    this->est_.update_voltage(v, now_ms());
   } else {
     this->est_.update(v, i, now_ms());
   }
@@ -133,8 +133,8 @@ void LiBattery::process_(float v, float i) {
   if (st.critical != was_crit)
     ESP_LOGW(TAG, "battery critical %s (%.3f V)", st.critical ? "ON" : "OFF", st.ocv);
   if (st.charging != was_chg) ESP_LOGI(TAG, "charging %s", st.charging ? "started" : "ended");
-  ESP_LOGD(TAG, "V %.3f I %.3f -> rest %.3f V, %.1f %%%s%s", v, i, st.ocv, st.percent, st.low ? " LOW" : "",
-           st.critical ? " CRITICAL" : "");
+  ESP_LOGD(TAG, "V %.3f I %.3f -> rest %.3f V, %.1f %%%s%s%s", v, i, st.ocv, st.percent, st.low ? " LOW" : "",
+           st.critical ? " CRITICAL" : "", st.charging ? " CHARGING" : "");
 }
 
 void LiBattery::publish_() {
@@ -150,7 +150,8 @@ void LiBattery::publish_() {
     const float r = this->est_.remaining_mah();
     if (!std::isnan(r)) this->remaining_s_->publish_state(r);
   }
-  if (this->time_left_s_ != nullptr && !std::isnan(this->last_i_))
+  // with a current: at that current; voltage only with charge_detect: at the discharge rate
+  if (this->time_left_s_ != nullptr && (!std::isnan(this->last_i_) || this->est_.cfg.charge_detect))
     this->time_left_s_->publish_state(this->est_.time_left_h(this->last_i_));
   if (this->power_s_ != nullptr) {
     // a power sensor given as input is passed through as is; otherwise V x I
@@ -161,12 +162,13 @@ void LiBattery::publish_() {
     }
   }
 #ifdef USE_BINARY_SENSOR
-  if (this->charging_s_ != nullptr && !std::isnan(this->last_i_)) this->charging_s_->publish_state(st.charging);
+  if (this->charging_s_ != nullptr && (!std::isnan(this->last_i_) || this->est_.cfg.charge_detect))
+    this->charging_s_->publish_state(st.charging);
   if (this->low_s_ != nullptr && !std::isnan(st.percent)) this->low_s_->publish_state(st.low);
   if (this->critical_s_ != nullptr && !std::isnan(st.ocv)) this->critical_s_->publish_state(st.critical);
 #endif
 #ifdef USE_TEXT_SENSOR
-  if (this->status_s_ != nullptr && !std::isnan(this->last_i_)) {
+  if (this->status_s_ != nullptr && (!std::isnan(this->last_i_) || this->est_.cfg.charge_detect)) {
     const std::string s = ::li_battery_core::status_str(st.status);
     if (!this->status_s_->has_state() || this->status_s_->state != s) this->status_s_->publish_state(s);
   }
@@ -183,6 +185,9 @@ void LiBattery::dump_config() {
   ESP_LOGCONFIG(TAG, "  Internal resistance: %.3f ohm", c.internal_resistance);
   ESP_LOGCONFIG(TAG, "  Low: %.0f %% (clears at %.0f %%), critical: %.2f V, resume: %.2f V", c.low_pct, c.low_clear_pct,
                 c.critical_v, c.resume_v);
+  if (!this->has_current_input_())
+    ESP_LOGCONFIG(TAG, "  Charge detect: %s (charging at %.3f V per cell, jump %.3f V)", YESNO(c.charge_detect), c.charge_v,
+                  c.charge_jump_v);
   ESP_LOGCONFIG(TAG, "  Restore: %s", this->restore_ == Restore::RTC ? "rtc" : "none");
   if (this->has_current_input_()) LOG_UPDATE_INTERVAL(this);
   LOG_SENSOR("  ", "Percent", this->percent_s_);

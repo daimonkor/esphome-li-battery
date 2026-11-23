@@ -9,7 +9,7 @@
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.1.0
+  - source: github://daimonkor/esphome-li-battery@v1.2.0
     components: [li_battery]
 
 sensor:
@@ -39,7 +39,7 @@ li_battery:
 
 | Что есть | Что дать li_battery | Что получишь |
 |---|---|---|
-| АЦП + делитель | `voltage` | процент, low / critical, усреднённое напряжение |
+| АЦП + делитель | `voltage` | процент, low / critical, усреднённое напряжение (+ зарядка и время работы с `charge_detect: true`) |
 | INA226 / INA219 (V и I) | `voltage`, `current` | + зарядка, статус, счёт кулонов, оставшееся время, мощность |
 | V и мощность со знаком | `voltage`, `power` | то же, I = P / V |
 | своя логика напряжения покоя | ничего — вызывай `id(bat).process_voltage(v)` | процент, уровни |
@@ -132,7 +132,7 @@ script:
             - switch.turn_on: modem_power
 ```
 
-Доступно: `percent()`, `is_low()`, `is_critical()`, `is_charging()`, `rest_voltage()`,
+Доступно: `percent()`, `is_low()`, `is_critical()`, `is_charging()`, `discharge_rate_pct_h()`, `time_left_h()`, `rest_voltage()`,
 `report_voltage()`, `remaining_mah()`, `voltage_for_percent(p, ток)`, `process_voltage(v)`,
 `rescale(ratio)`, `reset()`.
 

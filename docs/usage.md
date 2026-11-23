@@ -9,7 +9,7 @@ The smallest config that works — a template sensor stands in for your real vol
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.1.0
+  - source: github://daimonkor/esphome-li-battery@v1.2.0
     components: [li_battery]
 
 sensor:
@@ -39,7 +39,7 @@ Log after flashing:
 
 | You have | Give li_battery | You get |
 |---|---|---|
-| ADC + divider | `voltage` | percent, low / critical, averaged voltage |
+| ADC + divider | `voltage` | percent, low / critical, averaged voltage (+ charging and time left with `charge_detect: true`) |
 | INA226 / INA219 (V and I) | `voltage`, `current` | + charging, status, coulomb counting, time left, power |
 | V and signed power | `voltage`, `power` | same, I = P / V |
 | your own rest-voltage logic | nothing — call `id(bat).process_voltage(v)` | percent, levels |
@@ -131,7 +131,7 @@ script:
             - switch.turn_on: modem_power
 ```
 
-Available: `percent()`, `is_low()`, `is_critical()`, `is_charging()`, `rest_voltage()`,
+Available: `percent()`, `is_low()`, `is_critical()`, `is_charging()`, `discharge_rate_pct_h()`, `time_left_h()`, `rest_voltage()`,
 `report_voltage()`, `remaining_mah()`, `voltage_for_percent(p, current)`, `process_voltage(v)`,
 `rescale(ratio)`, `reset()`.
 
