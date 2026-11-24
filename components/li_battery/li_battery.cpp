@@ -133,8 +133,9 @@ void LiBattery::process_(float v, float i) {
   if (st.critical != was_crit)
     ESP_LOGW(TAG, "battery critical %s (%.3f V)", st.critical ? "ON" : "OFF", st.ocv);
   if (st.charging != was_chg) ESP_LOGI(TAG, "charging %s", st.charging ? "started" : "ended");
-  ESP_LOGD(TAG, "V %.3f I %.3f -> rest %.3f V, %.1f %%%s%s%s", v, i, st.ocv, st.percent, st.low ? " LOW" : "",
-           st.critical ? " CRITICAL" : "", st.charging ? " CHARGING" : "");
+  ESP_LOGD(TAG, "V %.3f I %.3f -> rest %.3f V, %.1f %% (curve %.1f %%)%s%s%s%s", v, i, st.ocv, st.percent, st.pct_true,
+           st.low ? " LOW" : "", st.critical ? " CRITICAL" : "", st.charging ? " CHARGING" : "",
+           st.full_relax ? " FULL-HOLD" : "");
 }
 
 void LiBattery::publish_() {
@@ -188,6 +189,9 @@ void LiBattery::dump_config() {
   if (!this->has_current_input_())
     ESP_LOGCONFIG(TAG, "  Charge detect: %s (charging at %.3f V per cell, jump %.3f V)", YESNO(c.charge_detect), c.charge_v,
                   c.charge_jump_v);
+  if (!this->has_current_input_() && c.charge_detect)
+    ESP_LOGCONFIG(TAG, "  Full hold: %s (%.1f h, max gap %.0f %%)", YESNO(c.full_anchor), c.full_relax_ms / 3600000.0f,
+                  c.full_max_gap_pct);
   ESP_LOGCONFIG(TAG, "  Restore: %s", this->restore_ == Restore::RTC ? "rtc" : "none");
   if (this->has_current_input_()) LOG_UPDATE_INTERVAL(this);
   LOG_SENSOR("  ", "Percent", this->percent_s_);

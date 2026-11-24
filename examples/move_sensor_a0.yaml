@@ -18,7 +18,7 @@ logger:
 external_components:
   - source:
       type: local
-      path: ../components           # in your project: github://daimonkor/esphome-li-battery@v1.2.1
+      path: ../components           # in your project: github://daimonkor/esphome-li-battery@v1.3.0
     components: [li_battery]
 
 deep_sleep:

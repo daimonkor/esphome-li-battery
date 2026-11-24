@@ -1,5 +1,20 @@
 # Changelog
 
+## 1.3.0 — 2026-11-24
+
+- Full charge = 100 % (voltage only, `charge_detect`): a charge that reached the top of the charge ends at
+  100 % and is held there for `full_hold` (6h). Right after a charge the rest voltage keeps sinking for
+  hours, so the curve alone showed 96–97 % for a full cell. After the hold the gap to the curve is closed
+  gradually over the discharge (never a step, never rising, equal to the curve at the bottom). More than
+  `full_max_gap` (10 %) below 100 during the hold = it was not full: the curve as is. `full_hold: 0s` — off.
+- Fix (1.2.1): after a charge ended the cell resting at 4.165–4.18 V (above `charge_voltage`) started
+  "charging" again after two readings, and nothing ended it until the 2 h stale timeout. Now, until the rest
+  voltage falls under `charge_voltage`, only a jump or a reading at the top of the charge starts a charge.
+- The discharge rate (`time_left`) starts after the hold and follows the shown percent — the sinking voltage
+  after a charge is not consumption.
+- `true_percent()` (curve alone) and `full_holding()` for lambdas; the debug log shows both.
+- RTC state magic `LiB4` (struct grew): the deep-sleep state starts over once after the update.
+
 ## 1.2.1 — 2026-11-24
 
 - `charge_detect`: charging also ends when the readings have not touched the top of the charge

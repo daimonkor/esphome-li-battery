@@ -136,6 +136,17 @@ struct Config {
   // discharge rate (voltage only, charge_detect): from the percent drop since the last charge
   float rate_min_drop_pct = 2;     // need at least this drop ...
   uint32_t rate_min_ms = 12UL * 3600UL * 1000UL;       // ... over at least this time
+  // 1.3.0 full charge = 100 % (voltage only, charge_detect), as fuel-gauge ICs do: the charge that reached
+  // the top of the charge (constant voltage) ends at 100 %. Right after it the rest voltage keeps sinking
+  // for hours (surface charge), so the curve alone shows 96-97 % for a cell that is full. The percent is
+  // held at 100 for full_relax_ms, the gap 100 - curve is then taken as the curve error at the top and
+  // closed gradually: shown = curve + gap * (curve - full_blend_to_pct) / (curve at the end of the hold -
+  // full_blend_to_pct), never rising — no 100 -> 96 step, it reaches the curve at the bottom.
+  bool full_anchor = true;
+  uint32_t full_relax_ms = 6UL * 3600UL * 1000UL;
+  uint8_t full_relax_n = 72;       //   without a clock: this many readings
+  float full_max_gap_pct = 10;     // the curve this far below 100 -> it was not full: no hold, the curve as is
+  float full_blend_to_pct = 0;     // the gap is gone when the curve gets here
 
   // voltage + current mode
   float charge_enter_a = -0.008f;  // I below this -> charging
@@ -160,9 +171,10 @@ inline const char *status_str(Status s) {
 }
 
 // Everything that has to survive deep sleep (kept in RTC memory with `restore: rtc`).
-// 1.2.0: "LiB2" — the struct grew (charge detection); 1.2.1: "LiB3" (top-of-charge tracking).
+// 1.2.0: "LiB2" — the struct grew (charge detection); 1.2.1: "LiB3" (top-of-charge tracking);
+// 1.3.0: "LiB4" (full-charge hold).
 // An old RTC copy after an OTA is dropped once.
-static constexpr uint32_t STATE_MAGIC = 0x4C694233u;  // "LiB3"
+static constexpr uint32_t STATE_MAGIC = 0x4C694234u;  // "LiB4"
 static constexpr uint8_t REPORT_MAX_N = 16;
 
 struct State {
@@ -191,10 +203,18 @@ struct State {
   int64_t chg_top_ms = 0;          // last reading at the top of the charge (>= charge_top_v), 0 = never
   uint8_t chg_below_top = 0;       // readings since then
   bool chg_reached_top = false;
+  bool chg_after = false;          // 1.3.0: charge just ended and the rest is still >= charge_v: no restart by the level
   // discharge rate: percent and time at the anchor (charge end or first reading)
   float rate_pct0 = -1;
   int64_t rate_ms0 = 0;
   float rate_pct_h = NAN;          // %/h, > 0 = discharging; NAN = not known yet
+  // full-charge hold (1.3.0)
+  bool full_relax = false;         // holding 100 % after a full charge
+  int64_t full_ms = 0;             // time the hold started
+  uint8_t full_n = 0;              // readings since then
+  float full_gap = -1;             // 100 - curve at the end of the hold, being closed; -1 = none
+  float full_p0 = -1;              // curve percent at the end of the hold
+  float pct_true = NAN;            // percent from the curve alone (percent = what is shown)
   // last results
   float percent = NAN;
   float ocv = NAN;                 // pack, after smoothing / I·R compensation
@@ -234,13 +254,21 @@ class Estimator {
         p < st->pct_last + cfg.rise_accept_pct)
       p = st->pct_last;
     st->pct_last = (int16_t) lroundf(p);
+    st->pct_true = p;
     st->ocv = st->vf * series();
     st->status = cfg.charge_detect ? (st->charging ? Status::CHARGING : Status::DISCHARGING) : Status::UNKNOWN;
-    levels_(p, st->vf);
-    st->percent = p;
-    if (cfg.charge_detect) rate_(p, now_ms, charge_ended);
-    return p;
+    const float shown = full_hold_(p, now_ms, charge_ended);
+    levels_(shown, st->vf);
+    st->percent = shown;
+    // the rate starts after the hold: the sinking voltage right after the charge is not consumption
+    if (cfg.charge_detect) rate_(shown, now_ms, charge_ended || st->full_relax);
+    return shown;
   }
+
+  // percent from the curve alone (voltage only); percent() is what is shown (full-charge hold)
+  float true_percent() const { return st->pct_true; }
+  // holding 100 % right after a full charge
+  bool full_holding() const { return st->full_relax; }
 
   // %/h of discharge since the last charge (voltage only, charge_detect), NAN while unknown
   float discharge_rate_pct_h() const { return st->rate_pct_h; }
@@ -331,6 +359,7 @@ class Estimator {
   float time_left_h(float i) const {
     if (std::isnan(i)) {
       if (st->charging || std::isnan(st->percent) || !(st->rate_pct_h > 0)) return NAN;
+      // shown percent: during the hold / closing the gap it is the better guess of what is left
       return st->percent / st->rate_pct_h;
     }
     const float rem = remaining_mah();
@@ -374,7 +403,12 @@ class Estimator {
     }
     if (clock) st->last_ms = now_ms;
     if (!st->charging) {
-      const bool cand = v >= cfg.charge_v || (st->vf > 0 && v - st->vf >= cfg.charge_jump_v);
+      // 1.3.0: right after a charge a full cell rests at 4.16-4.18 V — above charge_v — for hours; that
+      // level must not start "charging" again (1.2.1 did, and then nothing ended it). Until the rest
+      // voltage falls under charge_v only a jump or a reading at the top of the charge is a charger.
+      if (st->chg_after && v < cfg.charge_v - cfg.charge_hyst_v) st->chg_after = false;
+      const bool level = st->chg_after ? v >= cfg.charge_top_v : v >= cfg.charge_v;
+      const bool cand = level || (st->vf > 0 && v - st->vf >= cfg.charge_jump_v);
       if (!cand) {
         st->debounce_cnt = 0;
         return false;
@@ -416,7 +450,51 @@ class Estimator {
     if (!unplugged && !rebound) return false;
     st->charging = false;
     st->chg_drops = 0;
+    st->chg_after = true;
     return unplugged;   // a rebound changes nothing in the history
+  }
+
+  // Full charge = 100 %, then the gap to the curve is closed gradually (see Config::full_anchor).
+  float full_hold_(float p, int64_t now_ms, bool charge_ended) {
+    if (!cfg.charge_detect || !cfg.full_anchor || std::isnan(p)) return p;
+    if (st->charging) {
+      st->full_relax = false;
+      st->full_gap = -1;
+      return p;
+    }
+    if (charge_ended && st->chg_reached_top) {   // the charge reached constant voltage: full
+      st->full_relax = true;
+      st->full_ms = now_ms;
+      st->full_n = 0;
+      st->full_gap = -1;
+    }
+    if (st->full_relax) {
+      if (st->full_n < 255) st->full_n++;
+      const float gap = 100.0f - p;
+      if (gap > cfg.full_max_gap_pct) {   // far below full: unplugged early / wrong guess — show the curve
+        st->full_relax = false;
+        return p;
+      }
+      const bool over = (now_ms > 0 && st->full_ms > 0) ? now_ms - st->full_ms >= (int64_t) cfg.full_relax_ms
+                                                         : st->full_n >= cfg.full_relax_n;
+      if (!over) return 100.0f;
+      st->full_relax = false;
+      st->full_gap = gap;
+      st->full_p0 = p;
+    }
+    if (st->full_gap > 0) {
+      const float span = st->full_p0 - cfg.full_blend_to_pct;
+      float k = span > 0 ? (p - cfg.full_blend_to_pct) / span : 0;
+      k = k < 0 ? 0 : (k > 1 ? 1 : k);
+      float s = p + st->full_gap * k;
+      if (cfg.round_percent) s = roundf(s);
+      if (s > 100.0f) s = 100.0f;
+      if (!std::isnan(st->percent) && s > st->percent) s = st->percent;   // never rises while closing
+      if (s < p) s = p;
+      if (s - p < 0.5f) st->full_gap = -1;   // closed
+      return s;
+    }
+    return p;
   }
 
   // Discharge rate since the anchor (charge end / first reading / a rise of the percent).

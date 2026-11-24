@@ -377,12 +377,13 @@ static void test_discharge_rate() {
   e.update_voltage(4.15f, t += MIN_MS);
   CHECK(!st.charging);
   CHECK(std::isnan(e.discharge_rate_pct_h()));
-  // 4.15 -> 4.10 V over 24 h (100 -> 94 %)
-  for (int k = 1; k <= 288; k++) e.update_voltage(4.15f - 0.05f * k / 288.0f, t += 5 * MIN_MS);
+  // 4.15 -> 4.05 V over 36 h (curve 100 -> 85 %). 1.3.0: the first 6 h are the full-charge hold (100 %),
+  // the rate is taken from the shown percent after it
+  for (int k = 1; k <= 432; k++) e.update_voltage(4.15f - 0.10f * k / 432.0f, t += 5 * MIN_MS);
   CHECK(!std::isnan(e.discharge_rate_pct_h()));
-  CHECK_NEAR(e.discharge_rate_pct_h(), 6.0f / 24.0f, 0.06);
+  CHECK_NEAR(e.discharge_rate_pct_h(), (100.0f - st.percent) / 30.0f, 0.02);
   CHECK_NEAR(e.time_left_h(NAN), st.percent / e.discharge_rate_pct_h(), 1e-3);
-  CHECK(e.time_left_h(NAN) > 300 && e.time_left_h(NAN) < 500);
+  CHECK(e.time_left_h(NAN) > 150 && e.time_left_h(NAN) < 500);
   // no clock: rate stays unknown, charge detection still works by readings
   State s2;
   Estimator e2(charge_cfg(), &s2);
@@ -438,6 +439,138 @@ static void test_charge_detect_off_top() {
   CHECK(!s3.charging);
 }
 
+// 1.3.0: full charge = 100 %, the sinking rest voltage after it does not show as 96 %
+static Config full_cfg() {
+  Config c = charge_cfg();
+  return c;
+}
+static int64_t charge_to_top(Estimator &e, int64_t t) {
+  for (int k = 0; k < 10; k++) e.update_voltage(4.07f, t += 5 * MIN_MS);
+  e.update_voltage(4.18f, t += 5 * MIN_MS);
+  e.update_voltage(4.19f, t += 5 * MIN_MS);
+  for (int k = 0; k < 12; k++) e.update_voltage(k % 2 ? 4.20f : 4.21f, t += 5 * MIN_MS);
+  return t;
+}
+
+static void test_full_hold() {
+  State st;
+  Estimator e(full_cfg(), &st);
+  int64_t t = charge_to_top(e, 1000);
+  CHECK(st.charging);
+  // unplugged: 4.17 -> 4.11 V over 6 h (surface charge), the curve alone falls to ~97 %
+  float shown_prev = 101;
+  bool ended = false;
+  for (int k = 0; k < 72; k++) {
+    const float v = 4.17f - 0.06f * k / 71.0f;
+    e.update_voltage(v, t += 5 * MIN_MS);
+    if (!st.charging) {
+      ended = true;
+      CHECK_NEAR(st.percent, 100, 0);                     // held at 100
+    }
+  }
+  CHECK(ended);
+  CHECK(!st.charging);                                    // 4.16-4.17 V rest after the charge is not "charging" again
+  CHECK(e.true_percent() < 98);                           // the curve alone would show 96-97
+  // hold over: the gap is closed gradually, never a step, never rising, never below the curve
+  int64_t t_end = t;
+  int steps_big = 0;
+  for (float v = 4.11f; v > 3.40f; v -= 0.001f) {
+    e.update_voltage(v, t += 20 * MIN_MS);
+    if (st.percent > shown_prev) CHECK(false);
+    if (shown_prev <= 100 && shown_prev - st.percent > 2) steps_big++;
+    CHECK(st.percent >= e.true_percent());
+    shown_prev = st.percent;
+    if (t - t_end == 20 * MIN_MS) CHECK(st.percent >= 99);  // first reading after the hold
+  }
+  CHECK(steps_big == 0);
+  CHECK(st.percent - e.true_percent() < 0.5f);            // closed at the bottom
+  CHECK(!e.full_holding());
+}
+
+static void test_full_hold_not_full() {
+  // part charge (never at the top): no hold, the curve as is
+  State st;
+  Estimator e(full_cfg(), &st);
+  int64_t t = 1000;
+  for (int k = 0; k < 20; k++) e.update_voltage(3.80f, t += 5 * MIN_MS);
+  float v = 3.86f;
+  for (int k = 0; k < 20; k++, v += 0.01f) e.update_voltage(v, t += 2 * MIN_MS);
+  CHECK(st.charging);
+  e.update_voltage(3.99f, t += 2 * MIN_MS);
+  e.update_voltage(3.98f, t += 2 * MIN_MS);
+  CHECK(!st.charging);
+  CHECK(!e.full_holding());
+  CHECK_NEAR(st.percent, e.true_percent(), 0);
+
+  // reached the top, but the rest voltage falls far (old / weak cell): hold dropped, curve shown
+  State s2;
+  Estimator e2(full_cfg(), &s2);
+  t = charge_to_top(e2, 1000);
+  e2.update_voltage(4.17f, t += 5 * MIN_MS);
+  e2.update_voltage(4.16f, t += 5 * MIN_MS);
+  CHECK(!s2.charging && e2.full_holding());
+  for (int k = 0; k < 30; k++) e2.update_voltage(4.02f, t += 5 * MIN_MS);   // 80 %: gap > 10
+  CHECK(!e2.full_holding());
+  CHECK_NEAR(s2.percent, e2.true_percent(), 0);
+
+  // option off: old behaviour
+  Config c = full_cfg();
+  c.full_anchor = false;
+  State s3;
+  Estimator e3(c, &s3);
+  t = charge_to_top(e3, 1000);
+  for (int k = 0; k < 72; k++) e3.update_voltage(4.17f - 0.06f * k / 71.0f, t += 5 * MIN_MS);
+  CHECK(s3.percent < 98);
+  CHECK(!e3.full_holding());
+}
+
+static void test_full_hold_recharge_and_no_clock() {
+  // plugged in again during the hold: charging, then a new hold
+  State st;
+  Estimator e(full_cfg(), &st);
+  int64_t t = charge_to_top(e, 1000);
+  e.update_voltage(4.17f, t += 5 * MIN_MS);
+  e.update_voltage(4.16f, t += 5 * MIN_MS);
+  CHECK(e.full_holding());
+  e.update_voltage(4.20f, t += 5 * MIN_MS);
+  e.update_voltage(4.20f, t += 5 * MIN_MS);
+  CHECK(st.charging && !e.full_holding());
+
+  // no clock: the hold lasts full_relax_n readings
+  State s2;
+  Estimator e2(full_cfg(), &s2);
+  e2.update_voltage(4.20f);
+  e2.update_voltage(4.20f);
+  CHECK(s2.charging);
+  for (int k = 0; k < 6; k++) e2.update_voltage(4.15f);
+  CHECK(!s2.charging && e2.full_holding());
+  for (int k = 0; k < 80; k++) e2.update_voltage(4.12f);
+  CHECK(!e2.full_holding());
+  CHECK(s2.percent >= 99);                                // closing starts from 100, not a step to 97
+}
+
+// 1.3.0 regression: after the charge the rest at 4.165-4.17 V (above charge_v) restarted "charging" in 1.2.1,
+// and nothing ended it until the stale timeout
+static void test_no_restart_after_charge() {
+  State st;
+  Estimator e(charge_cfg(), &st);
+  int64_t t = charge_to_top(e, 1000);
+  for (int k = 0; k < 4; k++) e.update_voltage(4.17f, t += 5 * MIN_MS);
+  CHECK(!st.charging);
+  for (int k = 0; k < 20; k++) e.update_voltage(k % 2 ? 4.168f : 4.172f, t += 5 * MIN_MS);
+  CHECK(!st.charging);
+  e.update_voltage(4.205f, t += 5 * MIN_MS);              // plugged in again: back at the top
+  e.update_voltage(4.205f, t += 5 * MIN_MS);
+  CHECK(st.charging);
+  // the flag clears once the rest falls under charge_v: the level starts a charge again
+  State s2;
+  Estimator e2(charge_cfg(), &s2);
+  t = charge_to_top(e2, 1000);
+  for (int k = 0; k < 4; k++) e2.update_voltage(4.17f, t += 5 * MIN_MS);
+  for (int k = 0; k < 40; k++) e2.update_voltage(4.14f, t += 5 * MIN_MS);
+  CHECK(!s2.chg_after);
+}
+
 int main() {
   test_curves();
   test_sensor_equivalence();
@@ -456,6 +589,10 @@ int main() {
   test_charge_detect_off_and_stale();
   test_discharge_rate();
   test_charge_detect_off_top();
+  test_no_restart_after_charge();
+  test_full_hold();
+  test_full_hold_not_full();
+  test_full_hold_recharge_and_no_clock();
   std::printf("%s: %d checks, %d failed\n", g_fail ? "FAILED" : "OK", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }

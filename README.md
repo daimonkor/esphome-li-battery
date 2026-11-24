@@ -17,7 +17,7 @@ be changed from Home Assistant.
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.2.1
+  - source: github://daimonkor/esphome-li-battery@v1.3.0
     components: [li_battery]
 ```
 
@@ -135,6 +135,14 @@ within 30 min (a rebound after a load) is dropped. It ends when two readings in 
 the charge (4.195 V per cell) for 10 min — unplugged near full, or the charger has finished. The discharge rate is taken from the percent
 drop since the last charge (at least 2 % over 12 h) and gives `time_left`. Needs a clock that runs
 through deep sleep (ESP32 RTC — built in).
+
+**Full charge = 100 %** (with `charge_detect`, 1.3.0): a charge that reached the top (constant voltage)
+ends at 100 %. Right after it the rest voltage keeps sinking for hours, so the curve alone would show
+96–97 % for a full cell. The percent is held at 100 for `full_hold` (6h, `0s` = off), then the gap to the
+curve is closed gradually over the discharge — never a step, never rising, equal to the curve at the
+bottom (as fuel-gauge ICs smooth SOC). If the curve falls more than `full_max_gap` (10 %) below 100
+during the hold, the cell was not full and the curve is shown as is. `true_percent()` gives the curve
+alone, `full_holding()` whether 100 % is being held.
 
 **Current tuning (A):** `charge_enter_current` (−0.008), `charge_exit_current` (−0.004),
 `discharge_current` (0.008), `debounce` (2 updates), `full_voltage` (4.15 V per cell, by chemistry),

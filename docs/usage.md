@@ -9,7 +9,7 @@ The smallest config that works — a template sensor stands in for your real vol
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.2.1
+  - source: github://daimonkor/esphome-li-battery@v1.3.0
     components: [li_battery]
 
 sensor:

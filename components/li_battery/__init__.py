@@ -57,6 +57,8 @@ CONF_REPORT_AVERAGE = "report_average"
 CONF_CHARGE_DETECT = "charge_detect"
 CONF_CHARGE_VOLTAGE = "charge_voltage"
 CONF_CHARGE_JUMP = "charge_jump"
+CONF_FULL_HOLD = "full_hold"
+CONF_FULL_MAX_GAP = "full_max_gap"
 # outputs
 CONF_PERCENT = "percent"
 CONF_REST_VOLTAGE = "rest_voltage"
@@ -148,6 +150,9 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_CHARGE_DETECT, default=False): cv.boolean,
             cv.Optional(CONF_CHARGE_VOLTAGE): cv.float_range(min=2, max=5),  # V per cell
             cv.Optional(CONF_CHARGE_JUMP, default=0.04): cv.float_range(min=0.01, max=1),  # V per cell
+            # 1.3.0: after a full charge hold 100 % this long, then close the gap to the curve gradually; 0s = off
+            cv.Optional(CONF_FULL_HOLD, default="6h"): cv.positive_time_period_milliseconds,
+            cv.Optional(CONF_FULL_MAX_GAP, default=10): cv.float_range(min=0, max=50),  # %
             # voltage + current tuning (A; minus = charge)
             cv.Optional(CONF_CHARGE_ENTER_CURRENT, default=-0.008): cv.float_,
             cv.Optional(CONF_CHARGE_EXIT_CURRENT, default=-0.004): cv.float_,
@@ -267,6 +272,10 @@ async def to_code(config):
         charge_v = config.get(CONF_CHARGE_VOLTAGE, CHARGE_V_DEFAULTS[chem])
         cg.add(cg.RawStatement(f"{var}->core_config().charge_v = {charge_v}f;"))
         cg.add(cg.RawStatement(f"{var}->core_config().charge_jump_v = {config[CONF_CHARGE_JUMP]}f;"))
+        hold_ms = config[CONF_FULL_HOLD].total_milliseconds
+        cg.add(cg.RawStatement(f"{var}->core_config().full_anchor = {'true' if hold_ms > 0 else 'false'};"))
+        cg.add(cg.RawStatement(f"{var}->core_config().full_relax_ms = {hold_ms}UL;"))
+        cg.add(cg.RawStatement(f"{var}->core_config().full_max_gap_pct = {config[CONF_FULL_MAX_GAP]}f;"))
     cg.add(cg.RawStatement(f"{var}->core_config().charge_enter_a = {config[CONF_CHARGE_ENTER_CURRENT]}f;"))
     cg.add(cg.RawStatement(f"{var}->core_config().charge_exit_a = {config[CONF_CHARGE_EXIT_CURRENT]}f;"))
     cg.add(cg.RawStatement(f"{var}->core_config().discharge_a = {config[CONF_DISCHARGE_CURRENT]}f;"))

@@ -85,6 +85,9 @@ class LiBattery : public PollingComponent {
 
   // ---- for lambdas
   float percent() const { return this->state_->percent; }
+  // 1.3.0 (charge_detect): percent from the curve alone, and whether 100 % is being held after a full charge
+  float true_percent() const { return this->est_.true_percent(); }
+  bool full_holding() const { return this->est_.full_holding(); }
   bool is_low() const { return this->state_->low; }
   bool is_critical() const { return this->state_->critical; }
   bool is_charging() const { return this->state_->charging; }
