@@ -17,7 +17,7 @@ be changed from Home Assistant.
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.2.0
+  - source: github://daimonkor/esphome-li-battery@v1.2.1
     components: [li_battery]
 ```
 
@@ -131,7 +131,8 @@ rise this big is a charger and is taken at once), `report_average` (10), `report
 readings in a row are at or above `charge_voltage` (lipo / liion 4.165 V per cell, lifepo4 3.50 V) or
 `charge_jump` (0.04 V per cell) above the smoothed rest voltage; a jump that does not keep climbing
 within 30 min (a rebound after a load) is dropped. It ends when two readings in a row are under
-`charge_voltage` and 0.05 V below the peak on the charger. The discharge rate is taken from the percent
+`charge_voltage` and 0.05 V below the peak on the charger, or when the readings have not touched the top of
+the charge (4.195 V per cell) for 10 min — unplugged near full, or the charger has finished. The discharge rate is taken from the percent
 drop since the last charge (at least 2 % over 12 h) and gives `time_left`. Needs a clock that runs
 through deep sleep (ESP32 RTC — built in).
 

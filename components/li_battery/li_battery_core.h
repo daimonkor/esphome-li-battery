@@ -127,6 +127,12 @@ struct Config {
   float charge_rise_v = 0.02f;     // after the start it must climb this much more (or reach charge_v) ...
   uint32_t charge_confirm_ms = 30UL * 60UL * 1000UL;   // ... within this time, else it was a rebound
   uint32_t charge_stale_ms = 2UL * 3600UL * 1000UL;    // no reading this long -> charging state dropped
+  // 1.2.1: at the top of the charge (constant voltage) readings keep touching charge_top_v; a cell taken
+  // off the charger — or one the charger has finished — settles at 4.15-4.18 V and does not come back.
+  // Seen on the Move Sensor: on the charger 4.20-4.21 V (every 30-80 s with Wi-Fi on), unplugged 4.16-4.18 V.
+  float charge_top_v = 4.195f;     // per cell
+  uint32_t charge_top_hold_ms = 10UL * 60UL * 1000UL;  // no reading at the top this long (and 2 readings) -> ended
+  uint8_t charge_top_hold_n = 6;   //   without a clock: this many readings in a row below the top
   // discharge rate (voltage only, charge_detect): from the percent drop since the last charge
   float rate_min_drop_pct = 2;     // need at least this drop ...
   uint32_t rate_min_ms = 12UL * 3600UL * 1000UL;       // ... over at least this time
@@ -154,8 +160,9 @@ inline const char *status_str(Status s) {
 }
 
 // Everything that has to survive deep sleep (kept in RTC memory with `restore: rtc`).
-// 1.2.0: "LiB2" — the struct grew (charge detection), an old RTC copy after an OTA is dropped
-static constexpr uint32_t STATE_MAGIC = 0x4C694232u;  // "LiB2"
+// 1.2.0: "LiB2" — the struct grew (charge detection); 1.2.1: "LiB3" (top-of-charge tracking).
+// An old RTC copy after an OTA is dropped once.
+static constexpr uint32_t STATE_MAGIC = 0x4C694233u;  // "LiB3"
 static constexpr uint8_t REPORT_MAX_N = 16;
 
 struct State {
@@ -181,6 +188,9 @@ struct State {
   float chg_peak_v = 0;            // per cell, highest reading on the charger
   uint8_t chg_drops = 0;
   bool chg_confirmed = false;
+  int64_t chg_top_ms = 0;          // last reading at the top of the charge (>= charge_top_v), 0 = never
+  uint8_t chg_below_top = 0;       // readings since then
+  bool chg_reached_top = false;
   // discharge rate: percent and time at the anchor (charge end or first reading)
   float rate_pct0 = -1;
   int64_t rate_ms0 = 0;
@@ -377,14 +387,30 @@ class Estimator {
       st->chg_peak_v = v;
       st->chg_drops = 0;
       st->chg_confirmed = v >= cfg.charge_v;
+      st->chg_reached_top = v >= cfg.charge_top_v;
+      st->chg_top_ms = st->chg_reached_top ? now_ms : 0;
+      st->chg_below_top = 0;
       return false;
     }
     if (v > st->chg_peak_v) st->chg_peak_v = v;
+    if (v >= cfg.charge_top_v) {
+      st->chg_reached_top = true;
+      st->chg_top_ms = now_ms;
+      st->chg_below_top = 0;
+    } else if (st->chg_below_top < 255) {
+      st->chg_below_top++;
+    }
     if (v >= cfg.charge_v || st->chg_peak_v >= st->chg_start_v + cfg.charge_rise_v - 1e-4f)
       st->chg_confirmed = true;
     if (v < cfg.charge_v - cfg.charge_hyst_v && v <= st->chg_peak_v - cfg.charge_drop_v + 1e-4f) st->chg_drops++;
     else st->chg_drops = 0;
-    const bool unplugged = st->chg_drops >= (cfg.charge_drop_n ? cfg.charge_drop_n : 1);
+    // left the top of the charge: unplugged, or the charger has finished (full, not charging any more)
+    bool off_top = false;
+    if (st->chg_reached_top && st->chg_below_top >= 2) {
+      if (clock && st->chg_top_ms > 0) off_top = now_ms - st->chg_top_ms >= (int64_t) cfg.charge_top_hold_ms;
+      else off_top = st->chg_below_top >= cfg.charge_top_hold_n;
+    }
+    const bool unplugged = off_top || st->chg_drops >= (cfg.charge_drop_n ? cfg.charge_drop_n : 1);
     const bool rebound = !st->chg_confirmed && clock && st->chg_since_ms > 0 &&
                          now_ms - st->chg_since_ms >= (int64_t) cfg.charge_confirm_ms;
     if (!unplugged && !rebound) return false;

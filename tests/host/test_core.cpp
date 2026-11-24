@@ -309,7 +309,8 @@ static void test_charge_detect_full_cycle() {
   e.update_voltage(4.15f, t += 2 * MIN_MS);
   CHECK(st.charging && st.status == Status::CHARGING);
   CHECK(st.percent > before);                             // on the charger the percent may rise
-  const float on_charger[] = {4.16f, 4.17f, 4.21f, 4.17f, 4.206f, 4.167f, 4.173f, 4.159f, 4.18f, 4.17f};
+  // real pattern: around 4.17-4.18 V with a reading at the top (4.20+) every few readings
+  const float on_charger[] = {4.16f, 4.17f, 4.21f, 4.17f, 4.206f, 4.167f, 4.173f, 4.204f, 4.159f, 4.18f, 4.206f, 4.17f};
   for (float v : on_charger) e.update_voltage(v, t += 2 * MIN_MS);
   CHECK(st.charging);                                     // taper noise (one 4.159) does not end it
   CHECK(!std::isnan(e.time_left_h(NAN)) == false);        // no time left while charging
@@ -391,6 +392,52 @@ static void test_discharge_rate() {
   CHECK(std::isnan(e2.discharge_rate_pct_h()));
 }
 
+// 1.2.1: unplugged at the top of the charge — the cell rests at 4.16-4.18 V, above the old end line
+static void test_charge_detect_off_top() {
+  State st;
+  Estimator e(charge_cfg(), &st);
+  int64_t t = 1000;
+  for (int k = 0; k < 10; k++) e.update_voltage(4.07f, t += 5 * MIN_MS);
+  e.update_voltage(4.15f, t += 5 * MIN_MS);
+  e.update_voltage(4.18f, t += 5 * MIN_MS);
+  CHECK(st.charging);
+  for (int k = 0; k < 12; k++) e.update_voltage(k % 2 ? 4.20f : 4.21f, t += 5 * MIN_MS);   // constant voltage, 1 h
+  CHECK(st.charging);
+  e.update_voltage(4.18f, t += 5 * MIN_MS);              // unplugged (24.11, 01:57): settles at 4.16-4.18 V
+  CHECK(st.charging);                                     // one reading below the top is not enough
+  e.update_voltage(4.17f, t += 5 * MIN_MS);
+  CHECK(!st.charging);                                    // 2 readings and 10 min since the last one at the top
+  CHECK(st.status == Status::DISCHARGING);
+
+  // Wi-Fi service mode on the charger: a reading every 5 s, 4.17-4.18 V with a 4.20 V spike every 30-80 s
+  State s2;
+  Estimator e2(charge_cfg(), &s2);
+  t = 1000;
+  e2.update_voltage(4.20f, t += 5000);
+  e2.update_voltage(4.20f, t += 5000);
+  CHECK(s2.charging);
+  std::mt19937 rng(7);
+  std::uniform_int_distribution<int> gap(6, 16);          // 30-80 s
+  int next = gap(rng);
+  for (int k = 0; k < 720; k++) {                         // 1 h
+    const bool spike = --next <= 0;
+    if (spike) next = gap(rng);
+    e2.update_voltage(spike ? 4.205f : (k % 3 ? 4.175f : 4.18f), t += 5000);
+  }
+  CHECK(s2.charging);
+
+  // no clock: N readings below the top
+  State s3;
+  Estimator e3(charge_cfg(), &s3);
+  e3.update_voltage(4.20f);
+  e3.update_voltage(4.20f);
+  CHECK(s3.charging);
+  for (int k = 0; k < 5; k++) e3.update_voltage(4.17f);
+  CHECK(s3.charging);
+  e3.update_voltage(4.17f);
+  CHECK(!s3.charging);
+}
+
 int main() {
   test_curves();
   test_sensor_equivalence();
@@ -408,6 +455,7 @@ int main() {
   test_charge_detect_rebound_and_partial();
   test_charge_detect_off_and_stale();
   test_discharge_rate();
+  test_charge_detect_off_top();
   std::printf("%s: %d checks, %d failed\n", g_fail ? "FAILED" : "OK", g_checks, g_fail);
   return g_fail ? 1 : 0;
 }

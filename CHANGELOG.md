@@ -1,5 +1,14 @@
 # Changelog
 
+## 1.2.1 — 2026-11-24
+
+- `charge_detect`: charging also ends when the readings have not touched the top of the charge
+  (4.195 V per cell) for 10 min and 2 readings. A LiPo taken off the charger near full rests at
+  4.16–4.18 V — above the 1.2.0 end line (4.155 V) — and stayed "charging" for hours; a charger that
+  has finished is now "not charging" too. Seen on the Move Sensor: on the charger the readings touch
+  4.20–4.21 V every 30–80 s, unplugged they do not.
+- RTC state magic `LiB3` (struct grew): the deep-sleep state starts over once after the update.
+
 ## 1.2.0 — 2026-11-24
 
 - Voltage only: `charge_detect: true` — tells when the battery is on the charger without a

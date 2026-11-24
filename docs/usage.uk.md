@@ -9,7 +9,7 @@
 
 ```yaml
 external_components:
-  - source: github://daimonkor/esphome-li-battery@v1.2.0
+  - source: github://daimonkor/esphome-li-battery@v1.2.1
     components: [li_battery]
 
 sensor:
